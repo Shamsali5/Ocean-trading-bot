@@ -74,10 +74,15 @@ class StructureState:
     """Structure-engine output snapshot for one timeframe."""
 
     timeframe: str
+    candles: list[Candle] = field(default_factory=list)
     swings: list[Swing] = field(default_factory=list)
     legs: list[Leg] = field(default_factory=list)
+    active_leg: Leg | None = None
+    range_state: RangeState | None = None
+    current_price: float | None = None
     direction: Direction = Direction.UNCLEAR
     market_state: MarketState = MarketState.UNCLEAR
+    summary: str = ""
 
 
 @dataclass(slots=True)
