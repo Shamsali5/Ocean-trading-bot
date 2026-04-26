@@ -26,6 +26,7 @@ from ocean_engine.trade.active_trade_engine import (
     detect_zone_reaction_candidate,
     select_active_trade,
 )
+from ocean_framework_v12_audit import FrameworkAuditTrace
 
 
 def _structure(timeframe: str) -> StructureState:
@@ -457,10 +458,8 @@ def test_demand_zone_bullish_confirmation_creates_reaction_candidate() -> None:
         divergence=None,
         zones=[_zone(ZoneType.DEMAND, 99.8, 100.2, status="REACTING")],
     )
-    assert candidate.exists is True
-    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
-    assert candidate.direction == DivergenceDirection.BULLISH
-    assert candidate.carry_timeframe == "5m"
+    assert candidate.exists is False
+    assert "WAIT" in candidate.selection_reason
 
 
 def test_supply_zone_bearish_confirmation_creates_reaction_candidate() -> None:
@@ -483,10 +482,8 @@ def test_supply_zone_bearish_confirmation_creates_reaction_candidate() -> None:
         divergence=None,
         zones=[_zone(ZoneType.SUPPLY, 108.9, 109.6, status="REACTING")],
     )
-    assert candidate.exists is True
-    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
-    assert candidate.direction == DivergenceDirection.BEARISH
-    assert candidate.carry_timeframe == "5m"
+    assert candidate.exists is False
+    assert "WAIT" in candidate.selection_reason
 
 
 def test_zone_without_impulse_creates_no_trade() -> None:
@@ -507,6 +504,31 @@ def test_zone_without_impulse_creates_no_trade() -> None:
         zones=[_zone(ZoneType.DEMAND, 100.0, 100.4, status="REACTING")],
     )
     assert candidate.exists is False
+    assert "WAIT" in candidate.selection_reason
+
+
+def test_zone_without_structure_confirmation_records_zone_alone_guard() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=100.2,
+            legs=[Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=100.0)],
+            active_leg=Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=100.0, is_active=True),
+            candles=_candles([102.0, 101.0, 100.2]),
+        ),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=100.3),
+    }
+    trace = FrameworkAuditTrace(symbol="BTCUSDT", timestamp="now")
+    candidate = detect_zone_reaction_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=None,
+        zones=[_zone(ZoneType.DEMAND, 100.0, 100.4, status="REACTING")],
+        trace=trace,
+    )
+    assert candidate.exists is False
+    names = {check.name for check in trace.checks}
+    assert "Zone alone cannot create trade" in names
 
 
 def test_midpoint_zone_cannot_create_trade() -> None:

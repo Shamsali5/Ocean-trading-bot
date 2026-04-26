@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ocean_impulse_acceptance import validate_breakout_acceptance
+from ocean_zone_engine import ZoneResult, zone_allows_trade
 from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, SetupType, TradeFunction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
@@ -360,10 +361,29 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
     divergence = _kwargs.get("divergence", None) if isinstance(_kwargs, dict) else None
     zones = _kwargs.get("zones", []) if isinstance(_kwargs, dict) else []
+    trace = _kwargs.get("trace", None) if isinstance(_kwargs, dict) else None
     if not timeframe:
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details="Missing timeframe context; zone cannot create trade.",
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
         return default_active_trade_candidate("")
     structure = structures.get(timeframe) if isinstance(structures, dict) else None
     if structure is None or structure.current_price is None:
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details=f"{timeframe} missing structure/current price context; zone cannot create trade.",
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
         candidate = default_active_trade_candidate(timeframe)
         candidate.selection_reason = "Zone reaction requires current structure context."
         return candidate
@@ -378,12 +398,30 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         and "midpoint" not in str(zone.role).lower()
     ]
     if not meaningful_zones:
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details=f"{timeframe} has no meaningful reacting/tested zone with structure confirmation.",
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
         candidate = default_active_trade_candidate(timeframe)
         candidate.selection_reason = "No meaningful reacting/tested zone at timeframe."
         return candidate
 
     zone = meaningful_zones[0]
     if zone.status == "ACCEPTED_THROUGH":
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details=f"{timeframe} zone status ACCEPTED_THROUGH, reaction trade blocked.",
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
         candidate = default_active_trade_candidate(timeframe)
         candidate.selection_reason = "Accepted-through zone cannot form reaction trade."
         return candidate
@@ -401,8 +439,19 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         needs_opposite_pull = True
 
     if len(structure.legs) < 2:
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details=(
+                    f"{timeframe} zone touched but no pullback/restart structure; final fresh entry must WAIT."
+                ),
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
         candidate = default_active_trade_candidate(timeframe)
-        candidate.selection_reason = "Zone reaction requires pullback and restart legs."
+        candidate.selection_reason = "Zone touched without full structure confirmation; WAIT."
         return candidate
     legs = sorted(structure.legs, key=lambda leg: leg.end_index)
     pullback_leg = legs[-2]
@@ -412,12 +461,34 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         expected_pull = Direction.DOWN if direction == DivergenceDirection.BULLISH else Direction.UP
         expected_restart = Direction.UP if direction == DivergenceDirection.BULLISH else Direction.DOWN
         if pullback_leg.direction != expected_pull:
+            if trace is not None and hasattr(trace, "add_check"):
+                trace.add_check(
+                    name="Zone alone cannot create trade",
+                    passed=True,
+                    severity="INFO",
+                    details=(
+                        f"{timeframe} zone touched but pullback did not weaken; final fresh entry must WAIT."
+                    ),
+                    file=__file__,
+                    function="detect_zone_reaction_candidate",
+                )
             candidate = default_active_trade_candidate(timeframe)
-            candidate.selection_reason = "Zone touched without weakening pullback."
+            candidate.selection_reason = "Zone touched without full structure confirmation; WAIT."
             return candidate
         if restart_leg.direction != expected_restart:
+            if trace is not None and hasattr(trace, "add_check"):
+                trace.add_check(
+                    name="Zone alone cannot create trade",
+                    passed=True,
+                    severity="INFO",
+                    details=(
+                        f"{timeframe} zone touched but restart impulse missing; final fresh entry must WAIT."
+                    ),
+                    file=__file__,
+                    function="detect_zone_reaction_candidate",
+                )
             candidate = default_active_trade_candidate(timeframe)
-            candidate.selection_reason = "Zone reaction missing confirmation impulse."
+            candidate.selection_reason = "Zone touched without full structure confirmation; WAIT."
             return candidate
 
     pullback_size = abs(pullback_leg.high - pullback_leg.low)
@@ -430,8 +501,19 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         else:
             weakens = closes[0] < closes[1] and closes[2] < closes[1]
     if not weakens:
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details=(
+                    f"{timeframe} zone touched but weakening not confirmed; final fresh entry must WAIT."
+                ),
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
         candidate = default_active_trade_candidate(timeframe)
-        candidate.selection_reason = "Reaction invalid: pullback did not weaken."
+        candidate.selection_reason = "Zone touched without full structure confirmation; WAIT."
         return candidate
 
     has_divergence_confirmation = bool(
@@ -442,6 +524,15 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
             (direction == DivergenceDirection.BULLISH and divergence.direction == DivergenceDirection.BULLISH)
             or (direction == DivergenceDirection.BEARISH and divergence.direction == DivergenceDirection.BEARISH)
         )
+    )
+    range_state = structure.range_state
+    bullish_reclaim = bool(
+        range_state is not None
+        and str(getattr(range_state, "status", "")).upper() in {"RE_ENTERED", "FAILED_BREAK_DOWN"}
+    )
+    bearish_rejection = bool(
+        range_state is not None
+        and str(getattr(range_state, "status", "")).upper() in {"RE_ENTERED", "FAILED_BREAK_UP"}
     )
     carry_tf, carry_state, carry_finished = _type3_carry_context(
         timeframe=timeframe,
@@ -456,6 +547,61 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     too_late = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
     fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
     existing_hold_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
+
+    zone_result = ZoneResult(
+        timeframe=timeframe,
+        zone_type="DEMAND" if zone.zone_type.name == "DEMAND" else "SUPPLY",
+        price_low=zone.lower,
+        price_high=zone.upper,
+        strength=str(getattr(zone.strength, "value", zone.strength)).upper(),
+        alignment=str(getattr(zone.alignment, "value", zone.alignment)).upper(),
+        structural_role=str(zone.role or ""),
+        status=str(zone.status or "NONE").upper(),
+        reason=str(zone.summary or ""),
+    )
+    setup_result = {
+        "downside_weakening": bool(direction == DivergenceDirection.BULLISH and weakens),
+        "upside_weakening": bool(direction == DivergenceDirection.BEARISH and weakens),
+        "bullish_divergence": bool(direction == DivergenceDirection.BULLISH and has_divergence_confirmation),
+        "bearish_divergence": bool(direction == DivergenceDirection.BEARISH and has_divergence_confirmation),
+        "reclaim": bool(direction == DivergenceDirection.BULLISH and bullish_reclaim),
+        "rejection": bool(direction == DivergenceDirection.BEARISH and bearish_rejection),
+        "restart": True,
+        "bullish_restart": bool(direction == DivergenceDirection.BULLISH),
+        "bearish_restart": bool(direction == DivergenceDirection.BEARISH),
+        "weakening": weakens,
+    }
+    impulse_result = {
+        "confirmed": restart_size > 0.0,
+        "direction": "UP" if direction == DivergenceDirection.BULLISH else "DOWN",
+    }
+    carry_result = {
+        "direction": carry_direction.value,
+        "state": carry_state.value,
+        "finished": carry_finished,
+    }
+    if not zone_allows_trade(
+        zone_result=zone_result,
+        setup_result=setup_result,
+        impulse_result=impulse_result,
+        carry_result=carry_result,
+        trace=trace,
+    ):
+        if trace is not None and hasattr(trace, "add_check"):
+            trace.add_check(
+                name="Zone alone cannot create trade",
+                passed=True,
+                severity="INFO",
+                details=(
+                    f"{timeframe} zone touch without full structure confirmation -> WAIT "
+                    f"(zone={zone.zone_type.name}, status={zone.status})"
+                ),
+                file=__file__,
+                function="detect_zone_reaction_candidate",
+            )
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Zone touched without full structure confirmation; WAIT."
+        return candidate
 
     if direction == DivergenceDirection.BULLISH:
         trigger = restart_leg.high
@@ -647,7 +793,7 @@ def build_active_trade_audit(
 ) -> ActiveTradeAudit:
     """Build active trade candidate rows per timeframe."""
 
-    zones = detect_supply_demand_zones(structures, divergence_audit)
+    zones = detect_supply_demand_zones(structures, divergence_audit, trace=trace)
     rows: dict[str, ActiveTradeCandidate] = {}
     for timeframe in TIMEFRAME_ORDER:
         divergence = getattr(divergence_audit, TIMEFRAME_TO_AUDIT_FIELD[timeframe])
@@ -668,6 +814,7 @@ def build_active_trade_audit(
             structures=structures,
             divergence=divergence,
             zones=zones,
+            trace=trace,
         )
         range_rejection_candidate = detect_range_rejection_candidate(
             timeframe=timeframe,

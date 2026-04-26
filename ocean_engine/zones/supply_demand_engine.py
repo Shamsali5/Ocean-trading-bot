@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from ocean_zone_engine import (
+    detect_supply_demand_zones as detect_supply_demand_zones_strict,
+)
 from ocean_engine.models.enums import Direction, DivergenceDirection, ZoneAlignment, ZoneStrength, ZoneType
 from ocean_engine.models.market import Candle, DivergenceAudit, StructureState, SupplyDemandZone
 
@@ -216,13 +219,40 @@ def detect_impulse_origin_zones(structures: dict[str, StructureState]) -> list[S
 def detect_supply_demand_zones(
     structures: dict[str, StructureState],
     divergence_audit: DivergenceAudit,
+    trace: object | None = None,
 ) -> list[SupplyDemandZone]:
-    """Aggregate range, divergence, and impulse zones and deduplicate."""
+    """Aggregate strict supply/demand zones as location-only evidence."""
 
+    strict_zones = detect_supply_demand_zones_strict(
+        context={"structures": structures, "divergence_audit": divergence_audit},
+        candles_by_tf={timeframe: state.candles for timeframe, state in structures.items()},
+        trace=trace,
+    )
     zones: list[SupplyDemandZone] = []
-    zones.extend(detect_range_edge_zones(structures))
-    zones.extend(detect_divergence_zones(divergence_audit))
-    zones.extend(detect_impulse_origin_zones(structures))
+    for zone in strict_zones:
+        zone_type = _zone_type_from_text(zone.zone_type)
+        if zone_type is None:
+            continue
+        lower = zone.price_low
+        upper = zone.price_high
+        if lower is None or upper is None:
+            continue
+        alignment = _zone_alignment_from_text(zone.alignment)
+        strength = _zone_strength_from_text(zone.strength)
+        zones.append(
+            SupplyDemandZone(
+                timeframe=zone.timeframe,
+                zone_type=zone_type,
+                lower=float(lower),
+                upper=float(upper),
+                strength=strength,
+                alignment=alignment,
+                role=zone.structural_role,
+                status=zone.status,
+                price_band=f"{float(lower):.2f}-{float(upper):.2f}",
+                summary=zone.reason,
+            )
+        )
     return deduplicate_zones(zones)
 
 
@@ -294,3 +324,30 @@ def _bands_overlap_heavily(left_band: str, right_band: str) -> bool:
     if smaller_width <= 0.0:
         return False
     return (overlap / smaller_width) >= 0.6
+
+
+def _zone_type_from_text(value: str) -> ZoneType | None:
+    text = str(value).upper()
+    if text == "DEMAND":
+        return ZoneType.DEMAND
+    if text == "SUPPLY":
+        return ZoneType.SUPPLY
+    return None
+
+
+def _zone_strength_from_text(value: str) -> ZoneStrength:
+    text = str(value).upper()
+    if text == "STRONG":
+        return ZoneStrength.STRONG
+    if text == "WEAK":
+        return ZoneStrength.WEAK
+    return ZoneStrength.MODERATE
+
+
+def _zone_alignment_from_text(value: str) -> ZoneAlignment:
+    text = str(value).upper()
+    if text == "ALIGNED":
+        return ZoneAlignment.ALIGNED
+    if text == "COUNTER":
+        return ZoneAlignment.COUNTER
+    return ZoneAlignment.NEUTRAL
