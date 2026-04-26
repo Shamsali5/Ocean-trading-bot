@@ -132,7 +132,14 @@ class ABCStructure:
     a_index: int
     b_index: int
     c_index: int
-    direction: Direction
+    direction: DivergenceDirection = DivergenceDirection.NONE
+    segment_a: Leg | None = None
+    segment_b: Leg | None = None
+    segment_c: Leg | None = None
+    abc_valid: bool = False
+    b_reset_valid: bool = False
+    c_retest_valid: bool = False
+    summary: str = ""
 
 
 @dataclass(slots=True)
