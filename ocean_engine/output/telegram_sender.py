@@ -1,0 +1,1 @@
+"""Telegram sending adapter skeleton."""
