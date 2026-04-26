@@ -62,6 +62,11 @@ class Leg:
     direction: Direction
     high: float
     low: float
+    start_price: float | None = None
+    end_price: float | None = None
+    start_time: int | None = None
+    end_time: int | None = None
+    is_active: bool = False
 
 
 @dataclass(slots=True)
