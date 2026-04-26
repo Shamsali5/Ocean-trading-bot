@@ -183,6 +183,10 @@ class SupplyDemandZone:
     upper: float
     strength: ZoneStrength = ZoneStrength.MODERATE
     alignment: ZoneAlignment = ZoneAlignment.NEUTRAL
+    price_band: str = ""
+    role: str = ""
+    status: str = "UNTESTED"
+    summary: str = ""
 
 
 @dataclass(slots=True)
