@@ -83,6 +83,44 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
     assert candidate.type_label.startswith("1H")
 
 
+def test_1h_official_bearish_divergence_creates_1h_bearish_type1_if_carry_identifiable(monkeypatch) -> None:
+    structures = {"1h": _structure("1h"), "15m": _structure("15m")}
+    divergence = _official_divergence("1h", DivergenceDirection.BEARISH)
+    divergence_audit = DivergenceAudit(tf_1h=divergence)
+    monkeypatch.setattr(
+        "ocean_engine.trade.active_trade_engine.build_carry_status",
+        lambda *args, **kwargs: CarryStatus(
+            timeframe="15m",
+            direction=Direction.DOWN,
+            state=CarryState.ACTIVE,
+            finished=False,
+        ),
+    )
+    candidate = build_type1_candidate("1h", divergence, structures, divergence_audit)
+    assert candidate.exists is True
+    assert candidate.type_label == "1H Bearish Type 1"
+    assert candidate.origin_timeframe == "1h"
+
+
+def test_active_trade_audit_explains_missing_selection_when_carry_missing(monkeypatch) -> None:
+    structures = {"1h": _structure("1h")}
+    divergence_audit = DivergenceAudit(tf_1h=_official_divergence("1h", DivergenceDirection.BEARISH))
+    monkeypatch.setattr(
+        "ocean_engine.trade.active_trade_engine.build_carry_status",
+        lambda *args, **kwargs: CarryStatus(
+            timeframe="",
+            direction=Direction.DOWN,
+            state=CarryState.UNCLEAR,
+            finished=False,
+        ),
+    )
+    audit = build_active_trade_audit(structures, divergence_audit)
+    assert audit.selected_active_trade_tf is None
+    assert "No active trade selected." in audit.selection_reason
+    assert "1H Bearish official divergence has no Type 1 candidate" in audit.selection_reason
+    assert "Carry timeframe is not identifiable." in audit.selection_reason
+
+
 def test_5m_carry_does_not_become_5m_type1_without_5m_divergence(monkeypatch) -> None:
     structures = {"15m": _structure("15m"), "5m": _structure("5m")}
     divergence_audit = DivergenceAudit(tf_15m=_official_divergence("15m", DivergenceDirection.BULLISH))

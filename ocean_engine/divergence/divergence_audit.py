@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ocean_engine.divergence.abc_engine import find_abc_candidates, select_latest_abc_candidate
 from ocean_engine.divergence.divergence_engine import detect_divergence_from_abc
+from ocean_engine.models.enums import DivergenceDirection
 from ocean_engine.models.market import DivergenceAudit, DivergenceState, StructureState, VAccSeries
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
@@ -50,6 +51,9 @@ def audit_timeframe_divergence(timeframe: str, structure: StructureState, vacc: 
     c_end = latest.segment_c.end_index if latest.segment_c is not None else latest.c_index
     state.notes = f"{state.notes}; C ending at leg index {c_end}".strip("; ").strip()
     state.timeframe = timeframe
+    if state.exists and not is_official_divergence(state):
+        state.exists = False
+        state.notes = f"{state.notes}; downgraded_non_official=true"
     return state
 
 
@@ -90,7 +94,7 @@ def select_last_meaningful_divergence(audit: DivergenceAudit) -> DivergenceState
     official_rows: list[tuple[int, DivergenceState]] = []
     for field_name in TIMEFRAME_TO_FIELD.values():
         state = getattr(audit, field_name)
-        if not state.exists:
+        if not is_official_divergence(state):
             continue
         c_end = _extract_c_end_index(state)
         official_rows.append((c_end, state))
@@ -108,7 +112,7 @@ def divergence_audit_summary(audit: DivergenceAudit) -> str:
     for field_name in ("tf_4h", "tf_1h", "tf_15m", "tf_5m", "tf_3m"):
         state: DivergenceState = getattr(audit, field_name)
         label = FIELD_TO_LABEL[field_name]
-        if state.exists:
+        if is_official_divergence(state):
             direction = (
                 "Bearish"
                 if state.direction.value == "BEARISH"
@@ -117,9 +121,22 @@ def divergence_audit_summary(audit: DivergenceAudit) -> str:
                 else "Official"
             )
             labels.append(f"{label}:{direction}\u2713")
+        elif state.exists:
+            labels.append(f"{label}:Warning")
         else:
             labels.append(f"{label}:No")
     return " | ".join(labels)
+
+
+def is_official_divergence(state: DivergenceState) -> bool:
+    """Return true only for framework-valid official divergence rows."""
+
+    return bool(
+        state.exists
+        and state.abc_valid
+        and state.impulse_confirmed
+        and state.direction in (DivergenceDirection.BULLISH, DivergenceDirection.BEARISH)
+    )
 
 
 def _extract_c_end_index(state: DivergenceState) -> int:

@@ -23,7 +23,11 @@ from ocean_engine.models.market import (
     StructureState,
     SupplyDemandZone,
 )
-from ocean_engine.output.telegram_formatter import format_compact_telegram_report, format_final_action
+from ocean_engine.output.telegram_formatter import (
+    format_compact_telegram_report,
+    format_divergence_audit,
+    format_final_action,
+)
 
 
 def _sample_report() -> MarketReport:
@@ -166,3 +170,11 @@ def test_formatter_does_not_change_decision_final_action() -> None:
     before = report.decision.final_action
     _ = format_compact_telegram_report(report)
     assert report.decision.final_action == before
+
+
+def test_last_meaningful_formatter_includes_tf_direction_abc_and_impulse() -> None:
+    report = _sample_report()
+    text = format_divergence_audit(report.divergence_audit)
+    assert "Last Meaningful: 15m BULLISH" in text
+    assert "ABC: Yes" in text
+    assert "Impulse: Yes" in text
