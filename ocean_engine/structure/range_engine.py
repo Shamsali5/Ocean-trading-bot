@@ -128,6 +128,19 @@ def detect_breakout_acceptance(
                     return True
         return False
 
+    def _upgrade_risk_status() -> str:
+        has_failed_up = any(
+            close > upper and any(next_close <= upper for next_close in closes[idx + 1 :])
+            for idx, close in enumerate(closes)
+        )
+        has_failed_down = any(
+            close < lower and any(next_close >= lower for next_close in closes[idx + 1 :])
+            for idx, close in enumerate(closes)
+        )
+        if has_failed_up and has_failed_down:
+            return "UPGRADE_RISK"
+        return "ACTIVE"
+
     # Bullish break acceptance.
     if above_indices:
         first = above_indices[0]
@@ -138,7 +151,12 @@ def detect_breakout_acceptance(
         range_state.first_accepted_close = closes[first]
 
         if _failed_break_up(first):
-            range_state.status = "FAILED_BREAK_UP"
+            if lower <= current_price <= upper:
+                range_state.status = _upgrade_risk_status()
+                if range_state.status != "UPGRADE_RISK":
+                    range_state.status = "RE_ENTERED"
+            else:
+                range_state.status = "FAILED_BREAK_UP"
             range_state.acceptance_confirmed = False
             range_state.retest_held = False
             return range_state
@@ -160,7 +178,12 @@ def detect_breakout_acceptance(
         range_state.first_accepted_close = closes[first]
 
         if _failed_break_down(first):
-            range_state.status = "FAILED_BREAK_DOWN"
+            if lower <= current_price <= upper:
+                range_state.status = _upgrade_risk_status()
+                if range_state.status != "UPGRADE_RISK":
+                    range_state.status = "RE_ENTERED"
+            else:
+                range_state.status = "FAILED_BREAK_DOWN"
             range_state.acceptance_confirmed = False
             range_state.retest_held = False
             return range_state
@@ -173,7 +196,7 @@ def detect_breakout_acceptance(
         return range_state
 
     # No confirmed close outside: range stays active.
-    range_state.status = "ACTIVE"
+    range_state.status = _upgrade_risk_status()
     range_state.breakout_direction = Direction.UNCLEAR
     range_state.breakout_level = None
     range_state.breakout_confirmed = False

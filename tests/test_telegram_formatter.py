@@ -20,6 +20,7 @@ from ocean_engine.models.market import (
     DivergenceState,
     MarketReport,
     MultiLevelStory,
+    RangeState,
     StructureState,
     SupplyDemandZone,
 )
@@ -176,3 +177,20 @@ def test_last_meaningful_formatter_shows_timeframe_and_direction() -> None:
     report = _sample_report()
     text = format_divergence_audit(report.divergence_audit)
     assert "Last Meaningful: 15m BULLISH" in text
+
+
+def test_next_watch_shows_return_to_range_pressure_on_failed_breakout() -> None:
+    report = _sample_report()
+    report.structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            range_state=RangeState(
+                timeframe="15m",
+                is_range=True,
+                active=True,
+                status="FAILED_BREAK_UP",
+            ),
+        )
+    }
+    text = format_compact_telegram_report(report)
+    assert "return-to-range pressure" in text.lower()

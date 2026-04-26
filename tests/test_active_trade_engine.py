@@ -153,6 +153,12 @@ def test_type3_does_not_require_divergence() -> None:
     assert audit.tf_15m.setup_type == SetupType.TYPE_3
 
 
+def test_failed_breakout_blocks_type3_candidate() -> None:
+    structures = {"15m": _type3_structure("15m", status="FAILED_BREAK_UP", breakout_direction=Direction.UP, current_price=99.4)}
+    candidate = detect_type3_candidate(timeframe="15m", structures=structures)
+    assert candidate.exists is False
+
+
 def test_15m_bullish_type3_uses_5m_carry() -> None:
     structures = {
         "15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),

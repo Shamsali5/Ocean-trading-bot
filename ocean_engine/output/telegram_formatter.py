@@ -194,10 +194,11 @@ def format_next_watch(report: MarketReport) -> str:
 
     decision = getattr(report, "decision", None)
     action = _format_enum_value(getattr(decision, "final_action", "WAIT")) if decision else "WAIT"
+    pressure = _range_pressure_hint(getattr(report, "structures", None) or getattr(report, "structure", None) or {})
     return (
         f"Bullish need: Maintain bullish structure confirmation.\n"
         f"Bearish need: Maintain bearish structure confirmation.\n"
-        f"Next event: Watch for next carry/divergence transition (current {action})."
+        f"Next event: {pressure} (current {action})."
     )
 
 
@@ -311,3 +312,18 @@ def _normalize_tf(tf: str) -> str:
     if tf == "1h":
         return "1H"
     return tf
+
+
+def _range_pressure_hint(structures: dict[str, Any]) -> str:
+    priority = ["4h", "1h", "15m", "5m", "3m"]
+    for tf in priority:
+        structure = structures.get(tf)
+        if structure is None:
+            continue
+        range_state = getattr(structure, "range_state", None)
+        if range_state is None:
+            continue
+        status = str(getattr(range_state, "status", "UNCLEAR") or "UNCLEAR").upper()
+        if status in {"FAILED_BREAK_UP", "FAILED_BREAK_DOWN", "RE_ENTERED"}:
+            return "return-to-range pressure"
+    return "Watch for next carry/divergence transition"

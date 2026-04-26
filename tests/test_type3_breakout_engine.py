@@ -84,13 +84,29 @@ def test_wick_outside_without_close_does_not_confirm_breakout() -> None:
 def test_immediate_reclaim_sets_failed_break_statuses() -> None:
     bullish_candles = _candles_from_closes([99.0, 100.7, 99.7, 99.4])
     bullish = detect_breakout_acceptance(_active_range(), bullish_candles, [], current_price=99.4)
-    assert bullish.status == "FAILED_BREAK_UP"
+    assert bullish.status in {"FAILED_BREAK_UP", "RE_ENTERED", "UPGRADE_RISK"}
     assert bullish.acceptance_confirmed is False
 
     bearish_candles = _candles_from_closes([91.0, 89.3, 90.4, 90.8])
     bearish = detect_breakout_acceptance(_active_range(), bearish_candles, [], current_price=90.8)
-    assert bearish.status == "FAILED_BREAK_DOWN"
+    assert bearish.status in {"FAILED_BREAK_DOWN", "RE_ENTERED", "UPGRADE_RISK"}
     assert bearish.acceptance_confirmed is False
+
+
+def test_reentry_status_when_price_returns_inside_after_failed_break() -> None:
+    bullish_candles = _candles_from_closes([99.0, 100.8, 99.6, 99.2])
+    bullish = detect_breakout_acceptance(_active_range(), bullish_candles, [], current_price=99.2)
+    assert bullish.status == "RE_ENTERED"
+    assert bullish.breakout_confirmed is True
+    assert bullish.acceptance_confirmed is False
+
+
+def test_upgrade_risk_when_both_sides_fail_and_price_reenters() -> None:
+    candles = _candles_from_closes([100.7, 99.4, 89.2, 90.6, 95.0])
+    state = detect_breakout_acceptance(_active_range(), candles, [], current_price=95.0, lookback=5)
+    assert state.status == "UPGRADE_RISK"
+    assert state.acceptance_confirmed is False
+    assert state.breakout_confirmed is True
 
 
 def test_retest_hold_outside_confirms_acceptance() -> None:

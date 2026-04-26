@@ -136,6 +136,11 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         return candidate
 
     range_state = structure.range_state
+    if range_state.status in {"FAILED_BREAK_UP", "FAILED_BREAK_DOWN", "RE_ENTERED", "UPGRADE_RISK"}:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Failed/re-entered breakout blocks Type 3 setup."
+        return candidate
+
     bullish_break = range_state.status == "BROKEN_UP" or (
         range_state.acceptance_confirmed and range_state.breakout_direction == Direction.UP
     )
