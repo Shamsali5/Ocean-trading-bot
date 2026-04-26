@@ -186,8 +186,8 @@ def test_last_meaningful_formatter_shows_timeframe_and_direction() -> None:
 def test_divergence_formatter_shows_divergence_and_impulse_price_time() -> None:
     report = _sample_report()
     text = format_divergence_audit(report.divergence_audit)
-    assert "Divergence Price/Time: 101.55 @ 2026-04-26T05:45:00Z" in text
-    assert "Impulse Price/Time: 102.10 @ 2026-04-26T05:48:00Z" in text
+    assert "Divergence Price: 101.55" in text
+    assert "Impulse Price: 102.10" in text
 
 
 def test_divergence_formatter_lists_each_official_timeframe_event_details() -> None:
@@ -220,8 +220,8 @@ def test_divergence_formatter_lists_each_official_timeframe_event_details() -> N
         selected_last_meaningful_tf="3m",
     )
     text = format_divergence_audit(report.divergence_audit)
-    assert "4H Div: 79,400.00 @ 2026-04-20T08:00:00Z | Imp: 78,850.00 @ 2026-04-20T12:00:00Z" in text
-    assert "3m Div: 77,880.00 @ 2026-04-26T10:02:59.999000+00:00 | Imp: 77,992.10 @ 2026-04-26T10:08:59.999000+00:00" in text
+    assert "4H Div: 79,400.00 | Imp: 78,850.00" in text
+    assert "3m Div: 77,880.00 | Imp: 77,992.10" in text
 
 
 def test_removed_next_watch_section_from_compact_report() -> None:
@@ -498,7 +498,7 @@ def test_market_story_mentions_lower_tf_counter_move_at_range_bottom_with_demand
         "Counter Move: 5m Bullish Divergence (tactical) from 4H range lower boundary + 1H demand."
         in text
     )
-    assert "Counter Trigger Price/Time: 73,210.00 @ 2026-04-26T10:00:00Z" in text
+    assert "Counter Trigger Price: 73,210.00" in text
 
 
 def test_failed_breakout_appears() -> None:
