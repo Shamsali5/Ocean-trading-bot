@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ocean_framework_v12_contract import normalize_tf
+
 
 SEVERITY_LEVELS = ("INFO", "WARNING", "ERROR", "FATAL")
+TIMEFRAME_PRIORITY = ("1d", "12h", "4h", "1h", "15m", "5m", "3m")
+PARENT_CONTEXT_TFS = {"1d", "12h", "4h", "1h"}
+LOW_EXECUTION_TFS = {"5m", "3m"}
 
 
 @dataclass(slots=True)
@@ -119,6 +124,71 @@ def assert_or_wait(
     return condition
 
 
+def verify_timeframe_order(
+    available_timeframes: list[str] | tuple[str, ...] | set[str],
+    trace: FrameworkAuditTrace,
+) -> dict[str, object]:
+    """Verify highest-timeframe-first reading order and emit trace checks."""
+
+    raw_timeframes = [str(item) for item in available_timeframes]
+    normalized: list[str] = []
+    for item in raw_timeframes:
+        tf = normalize_tf(item)
+        if tf not in normalized:
+            normalized.append(tf)
+
+    sorted_timeframes = sorted(
+        normalized,
+        key=lambda tf: (_tf_priority_index(tf), tf),
+    )
+    highest = sorted_timeframes[0] if sorted_timeframes else None
+    first_read = normalized[0] if normalized else None
+
+    trace.add_check(
+        name="Highest timeframe detected",
+        passed=highest is not None,
+        severity="ERROR" if highest is None else "INFO",
+        details=f"Highest timeframe: {highest or 'N/A'}",
+        file="ocean_framework_v12_audit.py",
+        function="verify_timeframe_order",
+    )
+
+    starts_from_highest = bool(highest is not None and first_read == highest)
+    trace.add_check(
+        name="Analysis starts from highest timeframe",
+        passed=starts_from_highest,
+        severity="ERROR" if not starts_from_highest else "INFO",
+        details=f"First read timeframe: {first_read or 'N/A'}; expected: {highest or 'N/A'}",
+        file="ocean_framework_v12_audit.py",
+        function="verify_timeframe_order",
+    )
+
+    higher_context_available = any(tf in PARENT_CONTEXT_TFS for tf in normalized)
+    starts_low = first_read in LOW_EXECUTION_TFS
+    lower_before_higher = bool(higher_context_available and starts_low)
+    trace.add_check(
+        name="Lower timeframe not allowed to decide before higher context",
+        passed=not lower_before_higher,
+        severity="ERROR" if lower_before_higher else "INFO",
+        details=(
+            "Lower timeframe attempted to lead despite available higher context."
+            if lower_before_higher
+            else "Higher-timeframe context read before lower execution levels."
+        ),
+        file="ocean_framework_v12_audit.py",
+        function="verify_timeframe_order",
+    )
+
+    return {
+        "normalized_timeframes": normalized,
+        "sorted_timeframes": sorted_timeframes,
+        "highest_timeframe": highest,
+        "first_read_timeframe": first_read,
+        "higher_context_available": higher_context_available,
+        "lower_before_higher": lower_before_higher,
+    }
+
+
 def _icon_for_check(check: FrameworkCheck) -> str:
     """Return icon marker for one check row."""
 
@@ -127,3 +197,12 @@ def _icon_for_check(check: FrameworkCheck) -> str:
     if check.severity == "WARNING":
         return "⚠️"
     return "❌"
+
+
+def _tf_priority_index(tf: str) -> int:
+    """Return timeframe priority index; unknown labels sort last."""
+
+    try:
+        return TIMEFRAME_PRIORITY.index(tf)
+    except ValueError:
+        return len(TIMEFRAME_PRIORITY) + 1

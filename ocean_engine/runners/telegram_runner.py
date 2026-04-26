@@ -10,11 +10,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ocean_framework_v12_audit import FrameworkAuditTrace
 from ocean_engine.config import OceanConfig, load_config
 from ocean_engine.data.binance_fetcher import fetch_all_timeframes
 from ocean_engine.data.ohlcv_store import save_all_timeframes
 from ocean_engine.divergence.divergence_audit import build_divergence_audit
 from ocean_engine.energy.vacc_engine import calculate_vacc
+from ocean_engine.models.enums import FinalAction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
@@ -38,6 +40,14 @@ _TF_TO_FIELD = {
     "15m": "tf_15m",
     "5m": "tf_5m",
     "3m": "tf_3m",
+}
+_FRAMEWORK_TF_PRIORITY = ("1d", "12h", "4h", "1h", "15m", "5m", "3m")
+_FRAMEWORK_ACTIONS_REQUIRING_CONTEXT = {
+    FinalAction.BUY,
+    FinalAction.SELL,
+    FinalAction.CLOSE_LONG,
+    FinalAction.CLOSE_SHORT,
+    FinalAction.CLOSE_AND_FLIP,
 }
 
 
@@ -64,10 +74,48 @@ def build_market_report(
     """Run full deterministic analysis pipeline for one symbol."""
 
     timestamp = datetime.now(timezone.utc).isoformat()
+    trace = FrameworkAuditTrace(symbol=symbol, timestamp=timestamp)
+    analysis_timeframes = _ordered_timeframes_for_analysis(market_data.keys())
+    ordered_tfs, highest_tf, htf_start_ok, parent_context_available = verify_timeframe_order(
+        available_timeframes=analysis_timeframes,
+        trace=trace,
+    )
+    trace.add_check(
+        name="Analysis starts from highest timeframe",
+        passed=htf_start_ok,
+        severity="ERROR" if not htf_start_ok else "INFO",
+        details=(
+            f"Pipeline order: {', '.join(ordered_tfs)}"
+            if ordered_tfs
+            else "No timeframe data provided."
+        ),
+        file=__file__,
+        function="build_market_report",
+    )
+    trace.add_check(
+        name="Lower timeframe not allowed to decide before higher context",
+        passed=parent_context_available,
+        severity="ERROR" if not parent_context_available else "INFO",
+        details=(
+            f"Highest timeframe context available: {highest_tf}"
+            if parent_context_available
+            else "Highest-timeframe parent context missing while lower levels exist."
+        ),
+        file=__file__,
+        function="build_market_report",
+    )
+
+    ordered_market_data = {
+        tf: market_data[tf]
+        for tf in ordered_tfs
+        if tf in market_data
+    }
+    if not ordered_market_data:
+        ordered_market_data = dict(market_data)
     current_price = _resolve_current_price(market_data)
 
-    structures = analyze_all_structures(market_data)
-    vacc_map = build_vacc_map(market_data, config.vacc_period, config.vacc_smooth)
+    structures = analyze_all_structures(ordered_market_data)
+    vacc_map = build_vacc_map(ordered_market_data, config.vacc_period, config.vacc_smooth)
     divergence_audit = build_divergence_audit(structures, vacc_map)
     zones = detect_supply_demand_zones(structures, divergence_audit)
     active_trade_audit = build_active_trade_audit(structures, divergence_audit)
@@ -87,6 +135,11 @@ def build_market_report(
         multi_level_story=multi_level_story,
         zones=zones,
         position_mode=config.position_mode,
+    )
+    apply_htf_first_guard(
+        decision=decision,
+        conditions=(ordered_tfs, highest_tf, htf_start_ok, parent_context_available),
+        trace=trace,
     )
 
     selected = _selected_active_trade(active_trade_audit)
@@ -113,6 +166,7 @@ def build_market_report(
         story=multi_level_story,
         story_state=story_state,
         decision=decision,
+        framework_audit_trace=trace,
         summary=summary,
     )
 
@@ -184,6 +238,115 @@ def _timeframe_minutes(label: str) -> int:
     if text.endswith("d"):
         return int(text[:-1]) * 60 * 24
     return 10_000
+
+
+def verify_timeframe_order(
+    available_timeframes: list[str],
+    trace: FrameworkAuditTrace,
+) -> tuple[list[str], str | None, bool, bool]:
+    """Validate highest-timeframe-first ordering against framework priority."""
+
+    normalized_unique: list[str] = []
+    seen: set[str] = set()
+    for raw in available_timeframes:
+        normalized = _normalize_timeframe_label(raw)
+        if normalized in _FRAMEWORK_TF_PRIORITY and normalized not in seen:
+            normalized_unique.append(normalized)
+            seen.add(normalized)
+
+    ordered = [tf for tf in _FRAMEWORK_TF_PRIORITY if tf in seen]
+    highest = ordered[0] if ordered else None
+    trace.add_check(
+        name="Highest timeframe detected",
+        passed=highest is not None,
+        severity="ERROR" if highest is None else "INFO",
+        details=f"Highest relevant timeframe: {highest}" if highest else "No framework timeframe detected.",
+        file=__file__,
+        function="verify_timeframe_order",
+    )
+
+    starts_from_highest = not ordered or normalized_unique[:1] == ordered[:1]
+    if len(ordered) >= 2:
+        lowest = ordered[-1]
+        highest_idx = normalized_unique.index(ordered[0]) if ordered[0] in normalized_unique else 0
+        lowest_idx = normalized_unique.index(lowest) if lowest in normalized_unique else 0
+        starts_from_highest = starts_from_highest and highest_idx <= lowest_idx
+
+    parent_context_available = _has_parent_context(ordered)
+    return (ordered, highest, starts_from_highest, parent_context_available)
+
+
+def apply_htf_first_guard(
+    decision: Any,
+    conditions: tuple[list[str], str | None, bool, bool],
+    trace: FrameworkAuditTrace,
+) -> None:
+    """Downgrade executable actions to WAIT when HTF context is missing."""
+
+    _ordered, _highest, _htf_start_ok, parent_context_available = conditions
+    if parent_context_available:
+        return
+    if decision.final_action not in _FRAMEWORK_ACTIONS_REQUIRING_CONTEXT:
+        return
+
+    decision.final_action = FinalAction.WAIT
+    decision.action = FinalAction.WAIT
+    decision.reason = (
+        "Higher-timeframe context missing; framework v1.2 requires highest-timeframe-first reading."
+    )
+    decision.management_state = "NONE"
+    trace.add_check(
+        name="Lower timeframe not allowed to decide before higher context",
+        passed=False,
+        severity="ERROR",
+        details=(
+            "Final action downgraded to WAIT due to missing higher-timeframe context "
+            "for executable signal."
+        ),
+        file=__file__,
+        function="apply_htf_first_guard",
+    )
+
+
+def _normalize_timeframe_label(label: str) -> str:
+    text = str(label).strip().lower()
+    if text in {"1d", "1day", "d", "daily"}:
+        return "1d"
+    if text in {"12h", "12hour", "12hours"}:
+        return "12h"
+    if text in {"4h", "4hour", "4hours"}:
+        return "4h"
+    if text in {"1h", "60m", "60min", "60minutes"}:
+        return "1h"
+    if text in {"15m", "15min", "15minutes"}:
+        return "15m"
+    if text in {"5m", "5min", "5minutes"}:
+        return "5m"
+    if text in {"3m", "3min", "3minutes"}:
+        return "3m"
+    return text
+
+
+def _ordered_timeframes_for_analysis(available_timeframes: Any) -> list[str]:
+    """Return framework-priority timeframe order from available keys."""
+
+    normalized_seen: set[str] = set()
+    for raw in available_timeframes:
+        normalized = _normalize_timeframe_label(raw)
+        if normalized in _FRAMEWORK_TF_PRIORITY:
+            normalized_seen.add(normalized)
+    return [tf for tf in _FRAMEWORK_TF_PRIORITY if tf in normalized_seen]
+
+
+def _has_parent_context(ordered_timeframes: list[str]) -> bool:
+    """Return true when lower-level analysis has at least one parent timeframe."""
+
+    if not ordered_timeframes:
+        return False
+    has_lower = any(tf in {"5m", "3m"} for tf in ordered_timeframes)
+    if not has_lower:
+        return True
+    return any(tf in {"1d", "12h", "4h", "1h"} for tf in ordered_timeframes)
 
 
 def _selected_active_trade(audit: ActiveTradeAudit) -> ActiveTradeCandidate | None:
