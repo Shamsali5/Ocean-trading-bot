@@ -4,13 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from ocean_engine.models.enums import (
-    CarryState,
-    Direction,
-    DivergenceDirection,
-    SetupType,
-    TradeFunction,
-)
+from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, SetupType, TradeFunction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
@@ -18,7 +12,7 @@ from ocean_engine.models.market import (
     DivergenceState,
     StructureState,
 )
-from ocean_engine.trade.carry_engine import build_carry_status
+from ocean_engine.trade.carry_engine import build_carry_status, get_carry_timeframe
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
 TIMEFRAME_TO_AUDIT_FIELD = {
@@ -69,7 +63,7 @@ def build_type1_candidate(
     if not carry_identifiable:
         return default_active_trade_candidate(timeframe)
 
-    direction = Direction.UP if divergence.direction == DivergenceDirection.BULLISH else Direction.DOWN
+    direction = DivergenceDirection.BULLISH if divergence.direction == DivergenceDirection.BULLISH else DivergenceDirection.BEARISH
     tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
     dir_label = "Bullish" if divergence.direction == DivergenceDirection.BULLISH else "Bearish"
     type_label = f"{tf_label} {dir_label} Type 1"
@@ -129,10 +123,82 @@ def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
 
 
 def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
-    """Placeholder for Type 3 detection in future phases."""
+    """Build a generic Type 3 candidate from range breakout acceptance."""
 
     timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
-    return default_active_trade_candidate(timeframe or "")
+    structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
+    if not timeframe:
+        return default_active_trade_candidate("")
+    structure = structures.get(timeframe) if isinstance(structures, dict) else None
+    if structure is None or structure.range_state is None:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "No range context for Type 3."
+        return candidate
+
+    range_state = structure.range_state
+    bullish_break = range_state.status == "BROKEN_UP" or (
+        range_state.acceptance_confirmed and range_state.breakout_direction == Direction.UP
+    )
+    bearish_break = range_state.status == "BROKEN_DOWN" or (
+        range_state.acceptance_confirmed and range_state.breakout_direction == Direction.DOWN
+    )
+    if not bullish_break and not bearish_break:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "No accepted breakout for Type 3."
+        return candidate
+
+    if bullish_break:
+        direction = DivergenceDirection.BULLISH
+        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bullish Type 3"
+        breakout_level = range_state.upper_edge
+        invalidation = "Accepted reclaim back inside broken range below upper edge"
+        carry_direction = Direction.UP
+    else:
+        direction = DivergenceDirection.BEARISH
+        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bearish Type 3"
+        breakout_level = range_state.lower_edge
+        invalidation = "Accepted reclaim back inside broken range above lower edge"
+        carry_direction = Direction.DOWN
+
+    trigger_price = range_state.first_accepted_close or breakout_level
+    breakout_band = ""
+    if breakout_level is not None:
+        breakout_band = f"{breakout_level:.2f}-{breakout_level:.2f}"
+
+    carry_tf, carry_state, carry_finished = _type3_carry_context(
+        timeframe=timeframe,
+        carry_direction=carry_direction,
+        structures=structures if isinstance(structures, dict) else {},
+    )
+    too_late_to_chase = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
+    fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
+    existing_hold_valid = (
+        carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
+    )
+
+    return ActiveTradeCandidate(
+        timeframe=timeframe,
+        exists=True,
+        origin_timeframe=timeframe,
+        direction=direction,
+        setup_type=SetupType.TYPE_3,
+        trade_function=TradeFunction.BREAKOUT,
+        type_label=type_label,
+        origin_price_zone=breakout_band,
+        confirmation_price=structure.current_price,
+        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        earliest_legal_trigger_price=trigger_price,
+        carry_timeframe=carry_tf,
+        carry_direction=carry_direction,
+        carry_state=carry_state,
+        fresh_entry_valid=fresh_entry_valid,
+        existing_hold_valid=existing_hold_valid,
+        too_late_to_chase=too_late_to_chase,
+        invalidation=invalidation,
+        current_status="ACTIVE" if existing_hold_valid else "WATCH",
+        selection_reason="Accepted range breakout Type 3 setup.",
+        summary=f"{type_label} | carry={carry_tf or 'NONE'} {carry_state.value}",
+    )
 
 
 def build_active_trade_audit(
@@ -144,12 +210,14 @@ def build_active_trade_audit(
     rows: dict[str, ActiveTradeCandidate] = {}
     for timeframe in TIMEFRAME_ORDER:
         divergence = getattr(divergence_audit, TIMEFRAME_TO_AUDIT_FIELD[timeframe])
-        rows[timeframe] = build_type1_candidate(
+        type1_candidate = build_type1_candidate(
             timeframe=timeframe,
             divergence=divergence,
             structures=structures,
             divergence_audit=divergence_audit,
         )
+        type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures)
+        rows[timeframe] = type1_candidate if type1_candidate.exists else type3_candidate
 
     audit = ActiveTradeAudit(
         tf_4h=rows["4h"],
@@ -180,6 +248,18 @@ def select_active_trade(audit: ActiveTradeAudit) -> ActiveTradeCandidate | None:
     if not existing:
         return None
 
+    type3_hold_valid = [
+        candidate
+        for candidate in existing
+        if candidate.setup_type == SetupType.TYPE_3 and candidate.existing_hold_valid
+    ]
+    if type3_hold_valid:
+        return min(type3_hold_valid, key=lambda candidate: TIMEFRAME_RANK.get(candidate.origin_timeframe, 99))
+
+    type3_existing = [candidate for candidate in existing if candidate.setup_type == SetupType.TYPE_3]
+    if type3_existing:
+        return min(type3_existing, key=lambda candidate: TIMEFRAME_RANK.get(candidate.origin_timeframe, 99))
+
     hold_valid = [candidate for candidate in existing if candidate.existing_hold_valid]
     if hold_valid:
         return max(hold_valid, key=lambda candidate: TIMEFRAME_RANK.get(candidate.origin_timeframe, 0))
@@ -198,8 +278,46 @@ def active_trade_audit_summary(audit: ActiveTradeAudit) -> str:
         ("3m", audit.tf_3m),
     ):
         if candidate.exists:
-            labels.append(f"{timeframe}:{candidate.type_label}")
+            if candidate.setup_type == SetupType.TYPE_3:
+                if candidate.direction == DivergenceDirection.BULLISH:
+                    labels.append(f"{timeframe}:Bullish T3✓")
+                elif candidate.direction == DivergenceDirection.BEARISH:
+                    labels.append(f"{timeframe}:Bearish T3✓")
+                else:
+                    labels.append(f"{timeframe}:T3✓")
+            else:
+                labels.append(f"{timeframe}:{candidate.type_label}")
         else:
             labels.append(f"{timeframe}:No")
     return " | ".join(labels)
+
+
+def _type3_carry_context(
+    timeframe: str,
+    carry_direction: Direction,
+    structures: dict[str, StructureState],
+) -> tuple[str, CarryState, bool]:
+    """Infer carry context for Type 3 from lower timeframe structure only."""
+
+    carry_tf = get_carry_timeframe(timeframe)
+    if carry_tf is None:
+        return ("", CarryState.UNCLEAR, False)
+
+    carry_structure = structures.get(carry_tf)
+    if carry_structure is None:
+        return (carry_tf, CarryState.UNCLEAR, False)
+
+    active_leg = carry_structure.active_leg
+    if active_leg is None:
+        return (carry_tf, CarryState.UNCLEAR, False)
+
+    if carry_structure.range_state is not None and carry_structure.range_state.active:
+        return (carry_tf, CarryState.MATURE, False)
+
+    if active_leg.direction != carry_direction:
+        return (carry_tf, CarryState.EXHAUSTING, False)
+
+    if len(carry_structure.legs) <= 2:
+        return (carry_tf, CarryState.FRESH, False)
+    return (carry_tf, CarryState.ACTIVE, False)
 

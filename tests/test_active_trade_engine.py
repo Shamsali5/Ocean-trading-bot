@@ -2,25 +2,69 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, DivergenceGrade, SetupType
+from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, DivergenceGrade, SetupType, TradeFunction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     CarryStatus,
     DivergenceAudit,
     DivergenceState,
     Leg,
+    RangeState,
     StructureState,
 )
 from ocean_engine.trade.active_trade_engine import (
     active_trade_audit_summary,
     build_active_trade_audit,
     build_type1_candidate,
+    detect_type3_candidate,
     select_active_trade,
 )
 
 
 def _structure(timeframe: str) -> StructureState:
     return StructureState(timeframe=timeframe, legs=[])
+
+
+def _type3_structure(
+    timeframe: str,
+    *,
+    status: str,
+    breakout_direction: Direction,
+    current_price: float,
+    upper_edge: float = 100.0,
+    lower_edge: float = 90.0,
+    accepted_close: float = 100.5,
+) -> StructureState:
+    return StructureState(
+        timeframe=timeframe,
+        current_price=current_price,
+        active_leg=Leg(
+            start_index=0,
+            end_index=3,
+            direction=breakout_direction,
+            high=max(current_price, upper_edge),
+            low=min(current_price, lower_edge),
+            is_active=True,
+        ),
+        legs=[
+            Leg(start_index=0, end_index=1, direction=Direction.UP, high=upper_edge, low=lower_edge),
+            Leg(start_index=1, end_index=2, direction=Direction.DOWN, high=upper_edge + 0.2, low=lower_edge - 0.2),
+            Leg(start_index=2, end_index=3, direction=breakout_direction, high=upper_edge + 0.6, low=lower_edge - 0.6),
+        ],
+        range_state=RangeState(
+            timeframe=timeframe,
+            is_range=True,
+            active=True,
+            upper_edge=upper_edge,
+            lower_edge=lower_edge,
+            status=status,
+            breakout_direction=breakout_direction,
+            breakout_level=upper_edge if breakout_direction == Direction.UP else lower_edge,
+            breakout_confirmed=True,
+            acceptance_confirmed=True,
+            first_accepted_close=accepted_close,
+        ),
+    )
 
 
 def _official_divergence(timeframe: str, direction: DivergenceDirection, zone: str = "100.00-101.00") -> DivergenceState:
@@ -81,6 +125,81 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
     assert candidate.exists is True
     assert candidate.origin_timeframe == "1h"
     assert candidate.type_label.startswith("1H")
+
+
+def test_bullish_range_breakout_creates_bullish_type3_candidate() -> None:
+    structures = {"15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.6)}
+    candidate = detect_type3_candidate(timeframe="15m", structures=structures)
+    assert candidate.exists is True
+    assert candidate.setup_type == SetupType.TYPE_3
+    assert candidate.direction == DivergenceDirection.BULLISH
+    assert candidate.type_label == "15m Bullish Type 3"
+    assert candidate.trade_function == TradeFunction.BREAKOUT
+
+
+def test_bearish_range_breakdown_creates_bearish_type3_candidate() -> None:
+    structures = {"15m": _type3_structure("15m", status="BROKEN_DOWN", breakout_direction=Direction.DOWN, current_price=88.2)}
+    candidate = detect_type3_candidate(timeframe="15m", structures=structures)
+    assert candidate.exists is True
+    assert candidate.setup_type == SetupType.TYPE_3
+    assert candidate.direction == DivergenceDirection.BEARISH
+    assert candidate.type_label == "15m Bearish Type 3"
+
+
+def test_type3_does_not_require_divergence() -> None:
+    structures = {"15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.2)}
+    audit = build_active_trade_audit(structures, DivergenceAudit())
+    assert audit.tf_15m.exists is True
+    assert audit.tf_15m.setup_type == SetupType.TYPE_3
+
+
+def test_15m_bullish_type3_uses_5m_carry() -> None:
+    structures = {
+        "15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.0),
+    }
+    candidate = detect_type3_candidate(timeframe="15m", structures=structures)
+    assert candidate.carry_timeframe == "5m"
+
+
+def test_1h_bullish_type3_uses_15m_carry() -> None:
+    structures = {
+        "1h": _type3_structure("1h", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),
+        "15m": _type3_structure("15m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.0),
+    }
+    candidate = detect_type3_candidate(timeframe="1h", structures=structures)
+    assert candidate.carry_timeframe == "15m"
+
+
+def test_4h_bullish_type3_uses_1h_carry() -> None:
+    structures = {
+        "4h": _type3_structure("4h", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),
+        "1h": _type3_structure("1h", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.0),
+    }
+    candidate = detect_type3_candidate(timeframe="4h", structures=structures)
+    assert candidate.carry_timeframe == "1h"
+
+
+def test_5m_bullish_type3_uses_3m_carry() -> None:
+    structures = {
+        "5m": _type3_structure("5m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),
+        "3m": _type3_structure("3m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.0),
+    }
+    candidate = detect_type3_candidate(timeframe="5m", structures=structures)
+    assert candidate.carry_timeframe == "3m"
+
+
+def test_mature_carry_sets_type3_entry_and_hold_flags() -> None:
+    structures = {
+        "15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=100.9),
+    }
+    structures["5m"].range_state.active = True
+    candidate = detect_type3_candidate(timeframe="15m", structures=structures)
+    assert candidate.carry_state == CarryState.MATURE
+    assert candidate.fresh_entry_valid is False
+    assert candidate.existing_hold_valid is True
+    assert candidate.too_late_to_chase is True
 
 
 def test_type1_candidate_not_created_from_non_official_divergence(monkeypatch) -> None:
@@ -186,3 +305,47 @@ def test_audit_summary_prints_correct_rows() -> None:
     assert "15m:No" in summary
     assert "5m:No" in summary
     assert "3m:No" in summary
+
+
+def test_active_trade_audit_summary_prints_type3_rows() -> None:
+    audit = ActiveTradeAudit()
+    audit.tf_4h.exists = True
+    audit.tf_4h.setup_type = SetupType.TYPE_3
+    audit.tf_4h.direction = DivergenceDirection.BULLISH
+    audit.tf_1h.exists = True
+    audit.tf_1h.setup_type = SetupType.TYPE_3
+    audit.tf_1h.direction = DivergenceDirection.BULLISH
+    audit.tf_15m.exists = True
+    audit.tf_15m.setup_type = SetupType.TYPE_3
+    audit.tf_15m.direction = DivergenceDirection.BULLISH
+    audit.tf_5m.exists = True
+    audit.tf_5m.setup_type = SetupType.TYPE_3
+    audit.tf_5m.direction = DivergenceDirection.BULLISH
+    audit.tf_3m.exists = True
+    audit.tf_3m.setup_type = SetupType.TYPE_3
+    audit.tf_3m.direction = DivergenceDirection.BULLISH
+
+    summary = active_trade_audit_summary(audit)
+    assert "4H:Bullish T3✓" in summary
+    assert "1H:Bullish T3✓" in summary
+    assert "15m:Bullish T3✓" in summary
+    assert "5m:Bullish T3✓" in summary
+    assert "3m:Bullish T3✓" in summary
+
+
+def test_selected_active_trade_tf_type3_equals_true_origin_timeframe() -> None:
+    structures = {
+        "1h": _type3_structure("1h", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=102.0),
+        "15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.8),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.2),
+        "3m": _type3_structure("3m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.0),
+    }
+    structures["5m"].range_state.acceptance_confirmed = False
+    structures["5m"].range_state.breakout_direction = Direction.UNCLEAR
+    structures["3m"].range_state.acceptance_confirmed = False
+    structures["3m"].range_state.breakout_direction = Direction.UNCLEAR
+    audit = build_active_trade_audit(structures, DivergenceAudit())
+    selected = select_active_trade(audit)
+    assert selected is not None
+    assert selected.origin_timeframe == audit.selected_active_trade_tf
+    assert selected.origin_timeframe in {"1h", "15m"}
