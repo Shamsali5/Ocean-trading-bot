@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, FinalAction
+from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, FinalAction, SetupType
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
     DecisionState,
     DivergenceAudit,
+    DivergenceState,
     MultiLevelStory,
     StructureState,
 )
@@ -30,12 +31,14 @@ def _candidate(
     origin_timeframe: str = "15m",
     carry_timeframe: str = "5m",
     type_label: str = "15m Bullish Type 1",
+    setup_type: SetupType = SetupType.TYPE_1,
 ) -> ActiveTradeCandidate:
     return ActiveTradeCandidate(
         timeframe=origin_timeframe,
         exists=exists,
         origin_timeframe=origin_timeframe,
         direction=direction,
+        setup_type=setup_type,
         type_label=type_label,
         carry_timeframe=carry_timeframe,
         carry_state=carry_state,
@@ -177,7 +180,16 @@ def test_initial_buy_becomes_wait_when_guards_reject() -> None:
         carry_timeframe="15m",
     )
     audit = _audit_with_selected(candidate)
-    decision = build_decision_state({}, DivergenceAudit(), audit, MultiLevelStory())
+    divergence_audit = DivergenceAudit(
+        tf_15m=DivergenceState(
+            timeframe="15m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=True,
+            direction=DivergenceDirection.BEARISH,
+        )
+    )
+    decision = build_decision_state({}, divergence_audit, audit, MultiLevelStory())
     assert decision.final_action == FinalAction.WAIT
     assert decision.guard_reasons
 
@@ -225,7 +237,16 @@ def test_guard_reasons_preserved() -> None:
         carry_timeframe="15m",
     )
     audit = _audit_with_selected(candidate)
-    decision = build_decision_state({}, DivergenceAudit(), audit, MultiLevelStory())
+    divergence_audit = DivergenceAudit(
+        tf_15m=DivergenceState(
+            timeframe="15m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=True,
+            direction=DivergenceDirection.BEARISH,
+        )
+    )
+    decision = build_decision_state({}, divergence_audit, audit, MultiLevelStory())
     assert decision.guard_reasons
     assert decision.valid is False
 

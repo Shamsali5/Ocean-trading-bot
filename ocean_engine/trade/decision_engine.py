@@ -56,7 +56,12 @@ def initial_decision_from_active_trade(active_trade: ActiveTradeCandidate) -> De
         decision.reason = "No locked active trade origin exists."
         return decision
 
-    if active_trade.finished:
+    carry_finished = (
+        active_trade.carry_state == CarryState.EXHAUSTING
+        and active_trade.existing_hold_valid
+        and active_trade.current_status.upper() == "FINISHED"
+    )
+    if carry_finished:
         if active_trade.direction == Direction.UP:
             decision.final_action = FinalAction.CLOSE_LONG
         elif active_trade.direction == Direction.DOWN:
