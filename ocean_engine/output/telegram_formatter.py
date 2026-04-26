@@ -72,7 +72,7 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
     if divergence_audit is None:
         return (
             "Audit: N/A\nLast Meaningful: N/A\nABC: N/A\nImpulse: N/A\n"
-            "Divergence Price/Time: N/A\nImpulse Price/Time: N/A\nPer-TF Price/Time: N/A\nGrade: N/A"
+            "Divergence Price: N/A\nImpulse Price: N/A\nPer-TF Price: N/A\nGrade: N/A"
         )
 
     audit_line = divergence_audit_summary(divergence_audit)
@@ -93,23 +93,21 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
         else:
             abc = "No"
             impulse = "No"
-        divergence_price_time = _format_price_time(
+        divergence_price_time = _format_price_only(
             price=getattr(selected, "divergence_price", None),
-            timestamp=getattr(selected, "divergence_time_utc", ""),
         )
-        impulse_price_time = _format_price_time(
+        impulse_price_time = _format_price_only(
             price=getattr(selected, "impulse_price", None),
-            timestamp=getattr(selected, "impulse_time_utc", ""),
         )
         grade = _format_enum_value(getattr(selected, "grade", "N/A"))
-    per_tf_details = _format_per_tf_divergence_price_time(divergence_audit)
+    per_tf_details = _format_per_tf_divergence_price(divergence_audit)
     return (
         f"Audit: {audit_line}\n"
         f"Last Meaningful: {last_meaningful}\n"
         f"ABC: {abc}\n"
         f"Impulse: {impulse}\n"
-        f"Divergence Price/Time: {divergence_price_time}\n"
-        f"Impulse Price/Time: {impulse_price_time}\n"
+        f"Divergence Price: {divergence_price_time}\n"
+        f"Impulse Price: {impulse_price_time}\n"
         f"{per_tf_details}\n"
         f"Grade: {grade}"
     )
@@ -422,6 +420,14 @@ def _format_price_time(price: Any, timestamp: Any) -> str:
     return f"{price_text} @ {time_text}"
 
 
+def _format_price_only(price: Any) -> str:
+    """Format price only, intentionally omitting timestamp."""
+
+    if isinstance(price, (int, float)):
+        return f"{float(price):,.2f}"
+    return "N/A"
+
+
 def _latest_divergence_audit(report: MarketReport) -> DivergenceAudit | None:
     audits = getattr(report, "divergence_audits", None)
     if isinstance(audits, list) and audits:
@@ -618,13 +624,10 @@ def _format_counter_move(report: MarketReport) -> str:
 
 
 def _format_counter_trigger_line(state: Any) -> str:
-    """Render counter-move trigger price/time from divergence metadata."""
+    """Render counter-move trigger price from divergence metadata."""
 
-    trigger = _format_price_time(
-        price=getattr(state, "divergence_price", None),
-        timestamp=getattr(state, "divergence_time_utc", ""),
-    )
-    return f"Counter Trigger Price/Time: {trigger}"
+    trigger = _format_price_only(getattr(state, "divergence_price", None))
+    return f"Counter Trigger Price: {trigger}"
 
 
 def _infer_counter_setup_label(
@@ -741,25 +744,19 @@ def _smallest_active_internal_move(report: MarketReport) -> str:
     return _normalize_tf(fallback)
 
 
-def _format_per_tf_divergence_price_time(divergence_audit: DivergenceAudit) -> str:
-    """Render per-timeframe divergence/impulse event lines for official rows."""
+def _format_per_tf_divergence_price(divergence_audit: DivergenceAudit) -> str:
+    """Render per-timeframe divergence/impulse price lines for active rows."""
 
     lines: list[str] = []
     for tf, state in _iter_divergence_rows(divergence_audit):
         if not getattr(state, "exists", False):
             continue
-        div_text = _format_price_time(
-            price=getattr(state, "divergence_price", None),
-            timestamp=getattr(state, "divergence_time_utc", ""),
-        )
-        imp_text = _format_price_time(
-            price=getattr(state, "impulse_price", None),
-            timestamp=getattr(state, "impulse_time_utc", ""),
-        )
+        div_text = _format_price_only(getattr(state, "divergence_price", None))
+        imp_text = _format_price_only(getattr(state, "impulse_price", None))
         lines.append(f"{_normalize_tf(tf)} Div: {div_text} | Imp: {imp_text}")
     if not lines:
-        return "Per-TF Price/Time: N/A"
-    return "Per-TF Price/Time:\n" + "\n".join(lines)
+        return "Per-TF Price: N/A"
+    return "Per-TF Price:\n" + "\n".join(lines)
 
 
 def _normalize_tf(tf: str) -> str:
