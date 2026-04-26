@@ -20,6 +20,9 @@ from ocean_engine.models.market import (
 )
 from ocean_engine.trade.active_trade_engine import active_trade_audit_summary
 
+TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
+TIMEFRAME_RANK = {"4h": 5, "1h": 4, "15m": 3, "5m": 2, "3m": 1}
+
 
 def format_final_action(decision: DecisionState) -> str:
     """Format final action block from decision state."""
@@ -52,10 +55,12 @@ def format_market_story(report: MarketReport) -> str:
         alignment = "AGAINST_PARENT"
     else:
         alignment = "UNCLEAR"
+    counter_move = _format_counter_move(report)
     return (
         f"Parent Move: {parent} {parent_direction} {parent_state}\n"
         f"Current Move: {current_tf} {current_direction} ({current_origin})\n"
-        f"Current vs Parent: {alignment}"
+        f"Current vs Parent: {alignment}\n"
+        f"{counter_move}"
     )
 
 
@@ -122,35 +127,50 @@ def format_carry_status(report: MarketReport) -> str:
 
 
 def format_range_status(structures: dict[str, Any] | None) -> str:
-    """Format compact range/location summary using highest useful timeframe."""
+    """Format range/location summary, including multi-timeframe active ranges."""
 
     if not structures:
         return "N/A"
 
-    priority = ["4h", "1h", "15m", "5m", "3m"]
-    for tf in priority:
+    range_rows: list[tuple[str, Any]] = []
+    for tf in TIMEFRAME_ORDER:
         structure = structures.get(tf)
         if structure is None:
             continue
         range_state = getattr(structure, "range_state", None)
         if range_state is None:
             continue
+        range_rows.append((tf, range_state))
+
+    if not range_rows:
+        return "N/A"
+
+    active_rows = [(tf, state) for tf, state in range_rows if bool(getattr(state, "active", False))]
+    rows = active_rows if active_rows else range_rows[:1]
+    lines: list[str] = [f"Active Ranges: {len(active_rows)}"]
+    if len(active_rows) >= 2:
+        active_tfs = ",".join(_normalize_tf(tf) for tf, _ in active_rows)
+        lines.append(f"Multi-timeframe ranges: {active_tfs}")
+
+    for tf, range_state in rows:
         active = "YES" if getattr(range_state, "active", False) else "NO"
         location = _text(getattr(range_state, "price_location", "N/A"))
         status = _text(getattr(range_state, "status", "N/A"))
         ownership = _format_enum_value(getattr(range_state, "ownership", "N/A"))
         lower = getattr(range_state, "lower_edge", None)
         upper = getattr(range_state, "upper_edge", None)
-        band = f"{lower:.2f}-{upper:.2f}" if isinstance(lower, (int, float)) and isinstance(upper, (int, float)) else "N/A"
-        return (
-            f"Timeframe: {_normalize_tf(tf)}\n"
-            f"Range Active: {active}\n"
-            f"Status: {status}\n"
-            f"Location: {location}\n"
-            f"Ownership: {ownership}\n"
-            f"Band: {band}"
+        upper_text = f"{upper:.2f}" if isinstance(upper, (int, float)) else "N/A"
+        lower_text = f"{lower:.2f}" if isinstance(lower, (int, float)) else "N/A"
+        band = (
+            f"{lower:.2f}-{upper:.2f}"
+            if isinstance(lower, (int, float)) and isinstance(upper, (int, float))
+            else "N/A"
         )
-    return "N/A"
+        lines.append(
+            f"{_normalize_tf(tf)} | Active: {active} | Status: {status} | Location: {location} | "
+            f"Ownership: {ownership} | Upper: {upper_text} | Lower: {lower_text} | Band: {band}"
+        )
+    return "\n".join(lines)
 
 
 def format_zones(zones: list[SupplyDemandZone] | None, max_zones: int = 4) -> str:
@@ -421,6 +441,154 @@ def _selected_candidate(audit: ActiveTradeAudit | None) -> ActiveTradeCandidate 
     if candidate is None or not getattr(candidate, "exists", False):
         return None
     return candidate
+
+
+def _iter_divergence_rows(audit: DivergenceAudit | None) -> list[tuple[str, Any]]:
+    if audit is None:
+        return []
+    mapping = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}
+    rows: list[tuple[str, Any]] = []
+    for tf in TIMEFRAME_ORDER:
+        field = mapping.get(tf)
+        if not field:
+            continue
+        rows.append((tf, getattr(audit, field)))
+    return rows
+
+
+def _flatten_zones(report: MarketReport) -> list[SupplyDemandZone]:
+    zones = getattr(report, "zones", None)
+    zone_list: list[SupplyDemandZone] = []
+    if isinstance(zones, dict):
+        for item in zones.values():
+            if isinstance(item, list):
+                zone_list.extend(item)
+    elif isinstance(zones, list):
+        zone_list = zones
+    return zone_list
+
+
+def _parse_band(band: str) -> tuple[float, float] | None:
+    text = str(band).strip()
+    if "-" not in text:
+        return None
+    left, right = text.split("-", 1)
+    try:
+        a = float(left.strip())
+        b = float(right.strip())
+    except ValueError:
+        return None
+    return (min(a, b), max(a, b))
+
+
+def _price_in_range_bottom(price: float | None, ranges: list[tuple[str, Any]]) -> bool:
+    if price is None:
+        return False
+    for _, state in ranges:
+        if not getattr(state, "active", False):
+            continue
+        lower = getattr(state, "lower_edge", None)
+        upper = getattr(state, "upper_edge", None)
+        if not isinstance(lower, (int, float)) or not isinstance(upper, (int, float)):
+            continue
+        width = max(upper - lower, 1e-9)
+        bottom_threshold = lower + (0.25 * width)
+        if lower <= price <= bottom_threshold:
+            return True
+    return False
+
+
+def _price_in_range_top(price: float | None, ranges: list[tuple[str, Any]]) -> bool:
+    if price is None:
+        return False
+    for _, state in ranges:
+        if not getattr(state, "active", False):
+            continue
+        lower = getattr(state, "lower_edge", None)
+        upper = getattr(state, "upper_edge", None)
+        if not isinstance(lower, (int, float)) or not isinstance(upper, (int, float)):
+            continue
+        width = max(upper - lower, 1e-9)
+        top_threshold = upper - (0.25 * width)
+        if top_threshold <= price <= upper:
+            return True
+    return False
+
+
+def _zone_supports_counter(price: float | None, zones: list[SupplyDemandZone], bullish: bool) -> bool:
+    zone_type_text = "DEMAND" if bullish else "SUPPLY"
+    for zone in zones:
+        if _format_enum_value(getattr(zone, "zone_type", "")).upper() != zone_type_text:
+            continue
+        band = _parse_band(getattr(zone, "price_band", ""))
+        if band is None:
+            continue
+        if price is None:
+            return True
+        if band[0] <= price <= band[1]:
+            return True
+    return False
+
+
+def _format_counter_move(report: MarketReport) -> str:
+    """Describe lower-level counter move when opposite official divergence appears."""
+
+    divergence_audit = getattr(report, "divergence_audit", None) or _latest_divergence_audit(report)
+    rows = _iter_divergence_rows(divergence_audit)
+    active_trade_audit = getattr(report, "active_trade_audit", None) or _latest_active_trade_audit(report)
+    selected = _selected_candidate(active_trade_audit)
+    active_direction = _candidate_direction(selected) if selected is not None else Direction.UNCLEAR
+    if active_direction not in {Direction.UP, Direction.DOWN}:
+        return "Counter Move: None"
+
+    target_text = "BULLISH" if active_direction == Direction.DOWN else "BEARISH"
+    counter_rows: list[tuple[str, Any]] = []
+    for tf, state in rows:
+        if not is_official_divergence(state):
+            continue
+        direction_text = _format_enum_value(getattr(state, "direction", "")).upper()
+        if direction_text == target_text:
+            counter_rows.append((tf, state))
+    if not counter_rows:
+        return "Counter Move: None"
+
+    # Prefer the lowest (most internal) official counter row.
+    counter_rows.sort(key=lambda row: TIMEFRAME_RANK.get(row[0], 0))
+    tf, state = counter_rows[0]
+    price = getattr(state, "divergence_price", None)
+
+    structures = getattr(report, "structures", None) or getattr(report, "structure", None) or {}
+    ranges: list[tuple[str, Any]] = []
+    for range_tf in TIMEFRAME_ORDER:
+        structure = structures.get(range_tf)
+        if structure is None:
+            continue
+        range_state = getattr(structure, "range_state", None)
+        if range_state is not None:
+            ranges.append((range_tf, range_state))
+    zones = _flatten_zones(report)
+
+    if target_text == "BULLISH":
+        from_range = _price_in_range_bottom(price, ranges)
+        zone_support = _zone_supports_counter(price, zones, bullish=True)
+        context_bits: list[str] = []
+        if from_range:
+            context_bits.append("from range bottom")
+        if zone_support:
+            context_bits.append("demand zone")
+    else:
+        from_range = _price_in_range_top(price, ranges)
+        zone_support = _zone_supports_counter(price, zones, bullish=False)
+        context_bits = []
+        if from_range:
+            context_bits.append("from range top")
+        if zone_support:
+            context_bits.append("supply zone")
+
+    if context_bits:
+        context_text = " + ".join(context_bits)
+        return f"Counter Move: {_normalize_tf(tf)} {target_text} divergence {context_text}."
+    return f"Counter Move: {_normalize_tf(tf)} {target_text} divergence."
 
 
 def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:

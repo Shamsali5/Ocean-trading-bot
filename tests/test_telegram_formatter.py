@@ -274,6 +274,119 @@ def test_range_ownership_appears() -> None:
     assert "Ownership: UP" in text
 
 
+def test_range_section_includes_upper_lower_boundaries_and_multitimeframe_notice() -> None:
+    report = _sample_report()
+    report.structures = {
+        "4h": StructureState(
+            timeframe="4h",
+            range_state=RangeState(
+                timeframe="4h",
+                is_range=True,
+                active=True,
+                status="ACTIVE",
+                lower_edge=73000.0,
+                upper_edge=79000.0,
+                price_location="UPPER_EDGE",
+                ownership=Direction.UP,
+            ),
+        ),
+        "1h": StructureState(
+            timeframe="1h",
+            range_state=RangeState(
+                timeframe="1h",
+                is_range=True,
+                active=True,
+                status="ACTIVE",
+                lower_edge=76000.0,
+                upper_edge=78000.0,
+                price_location="MID",
+                ownership=Direction.DOWN,
+            ),
+        ),
+    }
+    text = format_compact_telegram_report(report)
+    assert "Active Ranges: 2" in text
+    assert "Multi-timeframe ranges: 4H,1H" in text
+    assert "Upper: 79000.00" in text
+    assert "Lower: 73000.00" in text
+    assert "Upper: 78000.00" in text
+    assert "Lower: 76000.00" in text
+
+
+def test_market_story_mentions_lower_tf_counter_move_at_range_bottom_with_demand() -> None:
+    report = _sample_report()
+    report.active_trade_audit = ActiveTradeAudit(
+        tf_4h=ActiveTradeCandidate(
+            timeframe="4h",
+            exists=True,
+            origin_timeframe="4h",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            type_label="4H Bearish Type 1",
+            carry_timeframe="1h",
+            carry_state=CarryState.MATURE,
+            existing_hold_valid=True,
+        ),
+        selected_active_trade_tf="4h",
+    )
+    report.divergence_audit = DivergenceAudit(
+        tf_4h=DivergenceState(
+            timeframe="4h",
+            exists=True,
+            abc_valid=True,
+            direction=DivergenceDirection.BEARISH,
+            grade=DivergenceGrade.STRONG,
+            impulse_confirmed=True,
+        ),
+        tf_1h=DivergenceState(
+            timeframe="1h",
+            exists=True,
+            abc_valid=True,
+            direction=DivergenceDirection.BEARISH,
+            grade=DivergenceGrade.STRONG,
+            impulse_confirmed=True,
+        ),
+        tf_5m=DivergenceState(
+            timeframe="5m",
+            exists=True,
+            abc_valid=True,
+            direction=DivergenceDirection.BULLISH,
+            grade=DivergenceGrade.STRONG,
+            impulse_confirmed=True,
+            divergence_price=73210.0,
+            divergence_time_utc="2026-04-26T10:00:00Z",
+        ),
+        selected_last_meaningful_tf="5m",
+    )
+    report.structures = {
+        "4h": StructureState(
+            timeframe="4h",
+            range_state=RangeState(
+                timeframe="4h",
+                is_range=True,
+                active=True,
+                lower_edge=73000.0,
+                upper_edge=79000.0,
+                status="ACTIVE",
+                price_location="LOWER_EDGE",
+            ),
+        )
+    }
+    report.zones = [
+        SupplyDemandZone(
+            timeframe="1h",
+            zone_type=ZoneType.DEMAND,
+            lower=73100.0,
+            upper=73300.0,
+            price_band="73100.00-73300.00",
+            role="bullish impulse origin",
+            status="REACTING",
+        )
+    ]
+    text = format_compact_telegram_report(report)
+    assert "Counter Move: 5m BULLISH divergence from range bottom + demand zone." in text
+
+
 def test_failed_breakout_appears() -> None:
     report = _sample_report()
     report.structures = {
