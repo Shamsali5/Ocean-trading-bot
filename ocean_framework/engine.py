@@ -24,7 +24,17 @@ from .types import TIMEFRAMES_HIGH_TO_LOW, Candle, format_price, parse_candles
 class FrameworkEngine:
     """Deterministic implementation of the Ocean Natural Chanlun reading order."""
 
-    def analyze(self, symbol: str, raw_market_data: dict[str, list[list[Any]]], ts_utc: str) -> dict[str, Any]:
+    def analyze(
+        self,
+        symbol: str,
+        raw_market_data: dict[str, list[list[Any]]],
+        ts_utc: str,
+        position_side: str = "NONE",
+    ) -> dict[str, Any]:
+        position_side = position_side.upper().strip()
+        if position_side not in {"NONE", "LONG", "SHORT"}:
+            position_side = "NONE"
+
         market = {
             tf: build_timeframe_analysis(tf, parse_candles(raw_market_data.get(tf, [])))
             for tf in TIMEFRAMES_HIGH_TO_LOW
@@ -44,9 +54,10 @@ class FrameworkEngine:
             "symbol": symbol,
             "timestamp": ts_utc,
             "current_price": format_price(current_price),
-            "final_action": self._final_action(trade, range_state, carry),
-            "management_state": self._management_state(trade, carry),
-            "signal_side": self._signal_side(trade),
+            "position_side": position_side,
+            "final_action": self._final_action(trade, range_state, carry, position_side),
+            "management_state": self._management_state(trade, carry, position_side),
+            "signal_side": self._signal_side(trade, position_side),
             "parent_move": parent,
             "current_move": self._current_move(trade, parent),
             "divergence_audit": divergence_audit,
@@ -59,9 +70,9 @@ class FrameworkEngine:
             "active_trade_audit": active_trade_audit,
             "multi_level_story": story,
             "trade_classification": self._trade_classification(trade),
-            "position_management": self._position_management(trade, carry),
+            "position_management": self._position_management(trade, carry, position_side),
             "what_to_watch_next": self._watch_next(trade, zones, range_state),
-            "one_line_reason": self._reason(trade, range_state, carry),
+            "one_line_reason": self._reason(trade, range_state, carry, position_side),
             "current_move_summary": self._summary(trade, parent, carry, range_state),
         }
         return result
@@ -93,7 +104,21 @@ class FrameworkEngine:
         }
 
     @staticmethod
-    def _final_action(trade: TradeSetup | None, range_state: dict[str, Any], carry: dict[str, Any]) -> str:
+    def _final_action(
+        trade: TradeSetup | None,
+        range_state: dict[str, Any],
+        carry: dict[str, Any],
+        position_side: str,
+    ) -> str:
+        if position_side == "LONG":
+            if trade and trade.direction == "BEARISH" and carry["state"] in {"FRESH", "ACTIVE"}:
+                return "CLOSE LONG"
+            return "HOLD LONG"
+        if position_side == "SHORT":
+            if trade and trade.direction == "BULLISH" and carry["state"] in {"FRESH", "ACTIVE"}:
+                return "CLOSE SHORT"
+            return "HOLD SHORT"
+
         if trade is None:
             return "WAIT"
         if range_state["active"] == "YES" and range_state["price_location"] == "MID":
@@ -103,7 +128,17 @@ class FrameworkEngine:
         return "BUY" if trade.direction == "BULLISH" else "SELL"
 
     @staticmethod
-    def _management_state(trade: TradeSetup | None, carry: dict[str, Any]) -> str:
+    def _management_state(trade: TradeSetup | None, carry: dict[str, Any], position_side: str) -> str:
+        if position_side in {"LONG", "SHORT"} and trade:
+            if (
+                position_side == "LONG"
+                and trade.direction == "BEARISH"
+                or position_side == "SHORT"
+                and trade.direction == "BULLISH"
+            ) and carry["state"] in {"FRESH", "ACTIVE"}:
+                return "FULL_CLOSE"
+        if position_side in {"LONG", "SHORT"}:
+            return "HOLD"
         if trade is None:
             return "NONE"
         if carry["state"] in {"FRESH", "ACTIVE"}:
@@ -115,7 +150,9 @@ class FrameworkEngine:
         return "NONE"
 
     @staticmethod
-    def _signal_side(trade: TradeSetup | None) -> str:
+    def _signal_side(trade: TradeSetup | None, position_side: str) -> str:
+        if position_side in {"LONG", "SHORT"}:
+            return position_side
         if trade is None:
             return "NONE"
         return "BUY" if trade.direction == "BULLISH" else "SELL"
@@ -171,8 +208,21 @@ class FrameworkEngine:
         }
 
     @staticmethod
-    def _position_management(trade: TradeSetup | None, carry: dict[str, Any]) -> dict[str, Any]:
+    def _position_management(
+        trade: TradeSetup | None,
+        carry: dict[str, Any],
+        position_side: str,
+    ) -> dict[str, Any]:
         if trade is None:
+            if position_side in {"LONG", "SHORT"}:
+                return {
+                    "if_already_in": "HOLD",
+                    "if_not_in": "WAIT",
+                    "stop_action": "KEEP",
+                    "profit_action": "NONE",
+                    "runner_logic": "KEEP",
+                    "summary": f"Existing {position_side.lower()} position has no opposite local close signal.",
+                }
             return {
                 "if_already_in": "NONE",
                 "if_not_in": "WAIT",
@@ -181,8 +231,14 @@ class FrameworkEngine:
                 "runner_logic": "NONE",
                 "summary": "No position management action without active local setup.",
             }
+        if position_side == "LONG" and trade.direction == "BEARISH":
+            if_already = "FULL_CLOSE" if carry["state"] in {"FRESH", "ACTIVE"} else "CLOSE_WATCH"
+        elif position_side == "SHORT" and trade.direction == "BULLISH":
+            if_already = "FULL_CLOSE" if carry["state"] in {"FRESH", "ACTIVE"} else "CLOSE_WATCH"
+        else:
+            if_already = "HOLD_WITH_CAUTION" if carry["state"] == "MATURE" else "HOLD"
+
         if_not_in = "BUY" if trade.direction == "BULLISH" else "SELL"
-        if_already = "HOLD_WITH_CAUTION" if carry["state"] == "MATURE" else "HOLD"
         return {
             "if_already_in": if_already,
             "if_not_in": if_not_in if carry["state"] in {"FRESH", "ACTIVE"} else "WAIT",
@@ -211,7 +267,21 @@ class FrameworkEngine:
         }
 
     @staticmethod
-    def _reason(trade: TradeSetup | None, range_state: dict[str, Any], carry: dict[str, Any]) -> str:
+    def _reason(
+        trade: TradeSetup | None,
+        range_state: dict[str, Any],
+        carry: dict[str, Any],
+        position_side: str,
+    ) -> str:
+        if position_side == "LONG":
+            if trade and trade.direction == "BEARISH" and carry["state"] in {"FRESH", "ACTIVE"}:
+                return "CLOSE LONG because local framework found an opposite bearish setup with active carry."
+            return "HOLD LONG because no opposite bearish close condition is confirmed locally."
+        if position_side == "SHORT":
+            if trade and trade.direction == "BULLISH" and carry["state"] in {"FRESH", "ACTIVE"}:
+                return "CLOSE SHORT because local framework found an opposite bullish setup with active carry."
+            return "HOLD SHORT because no opposite bullish close condition is confirmed locally."
+
         if trade is None:
             return "WAIT because local framework analysis found no same-timeframe divergence setup with impulse."
         if range_state["active"] == "YES" and range_state["price_location"] == "MID":
@@ -240,5 +310,10 @@ class FrameworkEngine:
         )
 
 
-def analyze_market(symbol: str, raw_market_data: dict[str, list[list[Any]]], ts_utc: str) -> dict[str, Any]:
-    return FrameworkEngine().analyze(symbol, raw_market_data, ts_utc)
+def analyze_market(
+    symbol: str,
+    raw_market_data: dict[str, list[list[Any]]],
+    ts_utc: str,
+    position_side: str = "NONE",
+) -> dict[str, Any]:
+    return FrameworkEngine().analyze(symbol, raw_market_data, ts_utc, position_side)
