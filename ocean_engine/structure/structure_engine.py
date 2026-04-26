@@ -16,6 +16,7 @@ def analyze_structure(
     min_leg_bars: int = 5,
     min_move_pct: float = 0.001,
     range_min_legs: int = 3,
+    trace: object | None = None,
 ) -> StructureState:
     """Analyze one timeframe and return a complete StructureState snapshot."""
 
@@ -45,6 +46,7 @@ def analyze_structure(
             current_price=current_price,
             timeframe=timeframe_data.timeframe,
             min_legs=range_min_legs,
+            trace=trace,
         )
 
     market_state = MarketState.UNCLEAR
@@ -74,7 +76,13 @@ def analyze_structure(
     )
 
 
-def analyze_all_structures(market_data: dict[str, TimeframeData]) -> dict[str, StructureState]:
+def analyze_all_structures(
+    market_data: dict[str, TimeframeData],
+    trace: object | None = None,
+) -> dict[str, StructureState]:
     """Analyze all provided timeframes while preserving input keys."""
 
-    return {timeframe: analyze_structure(data) for timeframe, data in market_data.items()}
+    return {
+        timeframe: analyze_structure(data, trace=trace)
+        for timeframe, data in market_data.items()
+    }

@@ -261,3 +261,16 @@ def test_buy_forced_to_wait_when_parent_current_separation_is_unclear(tmp_path: 
     assert report.decision.final_action == FinalAction.WAIT
     assert report.decision.action == FinalAction.WAIT
     assert "Parent/current move separation unclear" in report.decision.reason
+
+
+def test_build_market_report_records_range_audit_checks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    trace = report.framework_audit_trace
+    assert trace is not None
+    names = {check.name for check in trace.checks}
+    assert "Range requires at least three sub-level moves" in names
+    assert "Range has upper/lower/midpoint" in names
+    assert "Range midpoint WAIT rule checked" in names
+    assert "Range parent move recorded" in names

@@ -104,7 +104,7 @@ def build_market_report(
         ordered_market_data = dict(market_data)
     current_price = _resolve_current_price(market_data)
 
-    structures = analyze_all_structures(ordered_market_data)
+    structures = analyze_all_structures(ordered_market_data, trace=trace)
     vacc_map = build_vacc_map(ordered_market_data, config.vacc_period, config.vacc_smooth)
     divergence_audit = build_divergence_audit(structures, vacc_map, trace=trace)
     zones = detect_supply_demand_zones(structures, divergence_audit)

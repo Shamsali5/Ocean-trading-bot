@@ -165,6 +165,28 @@ def test_range_summary_includes_ownership() -> None:
     assert "up" in state.summary.lower()
 
 
+def test_invalid_strict_range_does_not_emit_active_type3_source() -> None:
+    legs = [
+        _leg(0, 4, 90.0, 110.0, direction=Direction.UP),
+        _leg(5, 9, 95.0, 109.0, direction=Direction.UP),
+        _leg(10, 14, 97.0, 108.0, direction=Direction.UP),
+    ]
+    state = detect_range_from_legs(legs, current_price=107.0, timeframe="15m", min_legs=3, max_legs=3)
+    assert state.is_range is False
+    assert state.active is False
+
+
+def test_strict_range_invalid_when_no_rotation_pattern() -> None:
+    legs = [
+        _leg(0, 4, 90.0, 110.0, direction=Direction.UP),
+        _leg(5, 9, 94.0, 108.0, direction=Direction.UP),
+        _leg(10, 14, 96.0, 109.0, direction=Direction.UP),
+    ]
+    state = detect_range_from_legs(legs, current_price=107.0, timeframe="15m", min_legs=3, max_legs=3)
+    assert state.is_range is False
+    assert state.active is False
+
+
 def test_detect_range_ownership_unclear_when_pre_leg_direction_unclear() -> None:
     pre_leg = _leg(0, 4, 80.0, 100.0, direction=Direction.UNCLEAR)
     ownership, reason = detect_range_ownership(ordered_legs=[pre_leg], range_start_index=5)
