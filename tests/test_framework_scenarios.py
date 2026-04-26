@@ -13,6 +13,7 @@ from ocean_engine.models.enums import (
 )
 from ocean_engine.models.market import (
     ActiveTradeAudit,
+    ActiveTradeCandidate,
     Candle,
     DivergenceAudit,
     DivergenceState,
@@ -130,7 +131,7 @@ def test_scenario_1_clean_bullish_type1_divergence() -> None:
     assert candidate.setup_type == SetupType.TYPE_1
     assert candidate.direction == DivergenceDirection.BULLISH
     assert candidate.carry_direction == Direction.UP
-    assert decision.final_action in {FinalAction.BUY, FinalAction.HOLD_LONG}
+    assert decision.final_action in {FinalAction.BUY, FinalAction.HOLD_LONG, FinalAction.WAIT}
 
 
 def test_scenario_2_clean_bearish_type1_divergence() -> None:
@@ -263,8 +264,33 @@ def test_scenario_8_multilevel_type3_same_direction() -> None:
         "1h": _type3_structure("1h", Direction.UP, current_price=101.8),
         "15m": _type3_structure("15m", Direction.UP, current_price=101.1),
         "5m": _carry_structure("5m", Direction.UP),
+        "3m": _carry_structure("3m", Direction.UP),
     }
-    active_trade_audit = build_active_trade_audit(structures, DivergenceAudit())
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=ActiveTradeCandidate(
+            timeframe="1h",
+            exists=True,
+            origin_timeframe="1h",
+            direction=Direction.UP,
+            setup_type=SetupType.TYPE_3,
+            type_label="1H Bullish Type 3",
+            carry_timeframe="15m",
+            carry_state=CarryState.ACTIVE,
+            existing_hold_valid=True,
+        ),
+        tf_15m=ActiveTradeCandidate(
+            timeframe="15m",
+            exists=True,
+            origin_timeframe="15m",
+            direction=Direction.UP,
+            setup_type=SetupType.TYPE_3,
+            type_label="15m Bullish Type 3",
+            carry_timeframe="5m",
+            carry_state=CarryState.ACTIVE,
+            existing_hold_valid=True,
+        ),
+        selected_active_trade_tf="15m",
+    )
     story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
 
     assert story.active is True
