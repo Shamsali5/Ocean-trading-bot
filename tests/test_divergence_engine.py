@@ -8,7 +8,6 @@ from ocean_engine.divergence.divergence_engine import (
     compare_vacc_energy_a_vs_c,
     detect_divergence_from_abc,
     detect_opposite_impulse,
-    grade_divergence,
 )
 from ocean_engine.models.enums import Direction, DivergenceDirection, DivergenceGrade
 from ocean_engine.models.market import ABCStructure, Candle, Leg, VAccPoint, VAccSeries
@@ -188,6 +187,9 @@ def test_valid_abc_with_weaker_energy_but_no_impulse_is_weak_and_unofficial() ->
         acceleration[idx] = 0.1
     vacc = _vacc_with_values(velocity, acceleration)
     candles = _make_flat_candles(length=25, close=100.0)
+    # Add a strong post-C impulse candle so classifier can isolate missing carry/quality.
+    candles[15] = _candle(106.0, 107.0, 99.0, 99.4, 15)
+    candles[14] = _candle(105.5, 106.5, 104.0, 106.0, 14)
 
     state = detect_divergence_from_abc(abc, candles, vacc)
     assert state.exists is False
@@ -223,13 +225,32 @@ def test_valid_abc_with_impulse_but_no_weakness_is_weak_and_unofficial() -> None
     assert state.grade == DivergenceGrade.WEAK
 
 
-def test_grade_function_for_weakening_levels() -> None:
-    assert grade_divergence(True, 3, True) == DivergenceGrade.ELITE
-    assert grade_divergence(True, 2, True) == DivergenceGrade.STRONG
-    assert grade_divergence(True, 1, True) == DivergenceGrade.MODERATE
-    assert grade_divergence(True, 0, True) == DivergenceGrade.WEAK
-    assert grade_divergence(True, 2, False) == DivergenceGrade.WEAK
-    assert grade_divergence(False, 3, True) == DivergenceGrade.INVALID
+def test_divergence_wait_when_impulse_is_weak_warning_only() -> None:
+    a = _leg(2, 6, Direction.UP, low=90.0, high=110.0)
+    b = _leg(7, 9, Direction.DOWN, low=98.0, high=109.0)
+    c = _leg(10, 14, Direction.UP, low=97.0, high=111.0)
+    abc = _abc(DivergenceDirection.BEARISH, a, b, c)
+
+    velocity = [0.0] * 30
+    acceleration = [0.0] * 30
+    for idx in range(2, 7):
+        velocity[idx] = 2.0
+        acceleration[idx] = 0.4
+    for idx in range(10, 15):
+        velocity[idx] = 0.8
+        acceleration[idx] = 0.1
+    vacc = _vacc_with_values(velocity, acceleration)
+
+    candles = _make_flat_candles(length=25, close=100.0)
+    # Trigger impulse then immediate erase to force weak impulse warning.
+    candles[14] = _candle(105.5, 106.5, 104.0, 106.0, 14)
+    candles[15] = _candle(106.0, 107.0, 99.0, 99.4, 15)
+    candles[16] = _candle(99.4, 106.2, 99.2, 105.8, 16)
+
+    state = detect_divergence_from_abc(abc, candles, vacc)
+    assert state.exists is False
+    assert state.grade == DivergenceGrade.WEAK
+    assert state.impulse_confirmed is False
 
 
 def test_impulse_detection_rejects_weak_close_and_large_wick() -> None:

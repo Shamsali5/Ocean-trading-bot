@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ocean_divergence_classifier import classify_divergence
+from ocean_impulse_acceptance import validate_impulse_after_divergence
 from ocean_abc_validator import ABCSegment, ABCValidationResult
 from ocean_engine.energy.vacc_engine import (
     get_segment_acceleration_area,
@@ -507,11 +508,28 @@ def detect_divergence_from_abc(
         vacc_series=vacc_series,
         trace=trace,
     )
-    impulse_confirmed, impulse_price, impulse_time = detect_opposite_impulse_details(candles=candles, abc=abc)
+    impulse_direction = (
+        "BULLISH" if abc.direction == DivergenceDirection.BULLISH else "BEARISH"
+    )
+    local_pivots = {
+        "start_index": (abc.segment_c.end_index + 1) if abc.segment_c is not None else 0,
+        "minor_high": float(getattr(abc.segment_b, "high", 0.0) or 0.0),
+        "minor_low": float(getattr(abc.segment_b, "low", 0.0) or 0.0),
+    }
+    impulse_result = validate_impulse_after_divergence(
+        candles=candles,
+        timeframe=abc.timeframe,
+        direction=impulse_direction,
+        local_pivots=local_pivots,
+        trace=trace,
+    )
+    impulse_confirmed = impulse_result.confirmed
+    impulse_price = impulse_result.trigger_price
+    impulse_time = _close_time_from_index(candles, impulse_result.candle_index)
     classification = classify_divergence(
         abc_result=abc_validation,
         vacc_result=energy,
-        impulse_result=(impulse_confirmed, "STRONG" if impulse_confirmed else "NONE"),
+        impulse_result=(impulse_confirmed, impulse_result.grade),
         carry_result=None,
         trace=trace,
     )
@@ -560,6 +578,7 @@ def detect_divergence_from_abc(
             f"impulse={impulse_confirmed}, vel_weaker={energy.vel_weaker}, "
             f"acc_weaker={energy.acc_weaker}, acc_area_weaker={energy.acc_area_weaker}, "
             f"b_zero_reset={energy.b_zero_reset}, valid_energy_weakening={energy.valid_energy_weakening}, "
+            f"impulse_grade={impulse_result.grade}, impulse_reason={impulse_result.reason}, "
             f"classifier_grade={classification.grade}, role={classification.role}, reason={classification.reason}"
         ),
     )
@@ -593,3 +612,9 @@ def _close_time_to_utc(close_time: int | None) -> str:
     if close_time is None:
         return ""
     return datetime.fromtimestamp(close_time / 1000.0, tz=timezone.utc).isoformat()
+
+
+def _close_time_from_index(candles: list[Candle], index: int | None) -> int | None:
+    if index is None or index < 0 or index >= len(candles):
+        return None
+    return int(getattr(candles[index], "close_time", 0) or 0)

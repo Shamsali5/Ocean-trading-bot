@@ -263,6 +263,21 @@ def test_type3_does_not_require_divergence() -> None:
     assert audit.tf_15m.setup_type == SetupType.TYPE_3
 
 
+def test_type3_rejected_when_breakout_has_immediate_reclaim() -> None:
+    structure = _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=99.8)
+    structure.range_state.acceptance_confirmed = False
+    structure.range_state.retest_held = False
+    structure.range_state.first_break_index = 1
+    structure.candles = [
+        Candle(open_time=0, open=99.5, high=99.8, low=99.2, close=99.7, volume=1.0, close_time=1000),
+        Candle(open_time=1, open=99.7, high=100.5, low=99.6, close=100.3, volume=1.0, close_time=2000),
+        Candle(open_time=2, open=100.3, high=100.4, low=99.7, close=99.8, volume=1.0, close_time=3000),
+        Candle(open_time=3, open=99.8, high=100.0, low=99.5, close=99.9, volume=1.0, close_time=4000),
+    ]
+    candidate = detect_type3_candidate(timeframe="15m", structures={"15m": structure})
+    assert candidate.exists is False
+
+
 def test_bullish_type2_after_bullish_type1() -> None:
     structures = {
         "15m": _type2_structure("15m", prior_direction=Direction.UP),

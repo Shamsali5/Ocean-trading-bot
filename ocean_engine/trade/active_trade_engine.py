@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ocean_impulse_acceptance import validate_breakout_acceptance
 from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, SetupType, TradeFunction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
@@ -289,7 +290,21 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         invalidation = "Accepted reclaim back inside broken range above lower edge"
         carry_direction = Direction.DOWN
 
-    trigger_price = range_state.first_accepted_close or breakout_level
+    breakout_validation = validate_breakout_acceptance(
+        range_result=range_state,
+        candles=structure.candles,
+        direction=carry_direction,
+    )
+    if not breakout_validation.accepted:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = (
+            "Breakout without full acceptance cannot create Type 3."
+        )
+        return candidate
+
+    trigger_price = breakout_validation.trigger_price if breakout_validation.trigger_price is not None else (
+        range_state.first_accepted_close or breakout_level
+    )
     breakout_band = ""
     if breakout_level is not None:
         breakout_band = f"{breakout_level:.2f}-{breakout_level:.2f}"
