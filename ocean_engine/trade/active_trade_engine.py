@@ -35,7 +35,6 @@ def default_active_trade_candidate(timeframe: str) -> ActiveTradeCandidate:
     """Return a canonical empty candidate row for a timeframe."""
 
     return ActiveTradeCandidate(
-        symbol="",
         timeframe=timeframe,
         exists=False,
         origin_timeframe=timeframe,
@@ -95,7 +94,6 @@ def build_type1_candidate(
     )
 
     return ActiveTradeCandidate(
-        symbol="",
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
