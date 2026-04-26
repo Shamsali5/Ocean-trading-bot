@@ -43,24 +43,32 @@ def classify_zone_status(current_price: float, band: str, candles: list[Candle])
     lower, upper = parsed
     if lower <= current_price <= upper:
         return "REACTING"
+    band_width = max(upper - lower, 1e-12)
 
-    touched_before = any(
-        max(candle.low, lower) <= min(candle.high, upper) for candle in candles[:-1]
-    )
-    if touched_before:
-        return "TESTED"
+    if current_price > upper and any(lower <= candle.close <= upper for candle in candles[:-1]):
+        if (current_price - upper) >= (0.5 * band_width):
+            return "ACCEPTED_THROUGH"
+    if current_price < lower and any(lower <= candle.close <= upper for candle in candles[:-1]):
+        if (lower - current_price) >= (0.5 * band_width):
+            return "ACCEPTED_THROUGH"
 
     closes = [candle.close for candle in candles]
     if len(closes) >= 2:
-        if closes[-2] < lower and closes[-1] > upper:
+        if closes[-2] <= upper and closes[-1] > upper and any(candle.close <= upper for candle in candles[:-1]):
             return "ACCEPTED_THROUGH"
-        if closes[-2] > upper and closes[-1] < lower:
+        if closes[-2] >= lower and closes[-1] < lower and any(candle.close >= lower for candle in candles[:-1]):
             return "ACCEPTED_THROUGH"
 
     if current_price > upper and any(candle.close < lower for candle in candles):
         return "ACCEPTED_THROUGH"
     if current_price < lower and any(candle.close > upper for candle in candles):
         return "ACCEPTED_THROUGH"
+
+    touched_before = any(
+        max(candle.low, lower) <= min(candle.high, upper) for candle in candles[:-1]
+    )
+    if touched_before:
+        return "TESTED"
     return "UNTESTED"
 
 
