@@ -300,17 +300,24 @@ class DecisionState:
 class MarketReport:
     """Top-level report assembled by deterministic runner pipeline."""
 
-    symbol: str
-    generated_at: str
+    symbol: str = ""
+    generated_at: str = ""
+    timestamp: str = ""
+    current_price: float | None = None
     timeframe_data: dict[str, TimeframeData] = field(default_factory=dict)
     structure: dict[str, StructureState] = field(default_factory=dict)
+    structures: dict[str, StructureState] = field(default_factory=dict)
     ranges: dict[str, RangeState] = field(default_factory=dict)
     vacc: dict[str, VAccSeries] = field(default_factory=dict)
     divergences: dict[str, DivergenceState] = field(default_factory=dict)
+    divergence_audit: DivergenceAudit | None = None
     divergence_audits: list[DivergenceAudit] = field(default_factory=list)
-    zones: dict[str, list[SupplyDemandZone]] = field(default_factory=dict)
+    zones: dict[str, list[SupplyDemandZone]] | list[SupplyDemandZone] = field(default_factory=dict)
     carry: dict[str, CarryStatus] = field(default_factory=dict)
+    active_trade_audit: ActiveTradeAudit | None = None
     active_trade_audits: list[ActiveTradeAudit] = field(default_factory=list)
+    multi_level_story: MultiLevelStory | None = None
     story: MultiLevelStory | None = None
     decision: DecisionState | None = None
+    summary: str = ""
     metadata: Mapping[str, str] = field(default_factory=dict)
