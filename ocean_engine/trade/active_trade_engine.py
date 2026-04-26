@@ -829,12 +829,12 @@ def build_active_trade_audit(
             rows[timeframe] = type2_candidate
         elif type1_candidate.exists:
             rows[timeframe] = type1_candidate
-        elif zone_reaction_candidate.exists:
-            rows[timeframe] = zone_reaction_candidate
-        elif range_rejection_candidate.exists:
-            rows[timeframe] = range_rejection_candidate
         elif type3_candidate.exists:
             rows[timeframe] = type3_candidate
+        elif range_rejection_candidate.exists:
+            rows[timeframe] = range_rejection_candidate
+        elif zone_reaction_candidate.exists:
+            rows[timeframe] = zone_reaction_candidate
         else:
             rows[timeframe] = upgrade_candidate
 

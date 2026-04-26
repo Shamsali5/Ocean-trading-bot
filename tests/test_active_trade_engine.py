@@ -458,8 +458,10 @@ def test_demand_zone_bullish_confirmation_creates_reaction_candidate() -> None:
         divergence=None,
         zones=[_zone(ZoneType.DEMAND, 99.8, 100.2, status="REACTING")],
     )
-    assert candidate.exists is False
-    assert "WAIT" in candidate.selection_reason
+    assert candidate.exists is True
+    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
+    assert candidate.direction == DivergenceDirection.BULLISH
+    assert candidate.carry_timeframe == "5m"
 
 
 def test_supply_zone_bearish_confirmation_creates_reaction_candidate() -> None:
@@ -482,8 +484,10 @@ def test_supply_zone_bearish_confirmation_creates_reaction_candidate() -> None:
         divergence=None,
         zones=[_zone(ZoneType.SUPPLY, 108.9, 109.6, status="REACTING")],
     )
-    assert candidate.exists is False
-    assert "WAIT" in candidate.selection_reason
+    assert candidate.exists is True
+    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
+    assert candidate.direction == DivergenceDirection.BEARISH
+    assert candidate.carry_timeframe == "5m"
 
 
 def test_zone_without_impulse_creates_no_trade() -> None:
