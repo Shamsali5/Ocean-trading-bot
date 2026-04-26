@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ocean_abc_validator import ABCValidationResult
 from ocean_engine.divergence.divergence_engine import (
     compare_segment_energy,
     compare_vacc_energy_a_vs_c,
@@ -78,6 +79,27 @@ def _vacc_with_values(velocity: list[float], acceleration: list[float]) -> VAccS
         for i in range(len(velocity))
     ]
     return VAccSeries(timeframe="1h", points=points)
+
+
+def _abc_result(
+    *,
+    valid: bool = True,
+    direction: str = "BEARISH",
+    b_reset_valid: bool = True,
+    c_test_valid: bool = True,
+) -> ABCValidationResult:
+    return ABCValidationResult(
+        timeframe="1h",
+        direction=direction,
+        valid=valid,
+        segment_a=type("Seg", (), {"start_index": 2, "end_index": 6, "high": 110.0, "low": 90.0})(),
+        segment_b=type("Seg", (), {"start_index": 7, "end_index": 9, "high": 109.0, "low": 98.0})(),
+        segment_c=type("Seg", (), {"start_index": 10, "end_index": 14, "high": 111.5, "low": 97.0})(),
+        b_reset_valid=b_reset_valid,
+        c_test_valid=c_test_valid,
+        same_timeframe_valid=True,
+        reason="test",
+    )
 
 
 def test_invalid_abc_returns_no_divergence() -> None:
@@ -375,6 +397,25 @@ def test_compare_vacc_energy_single_component_is_not_valid_weakening() -> None:
     assert result.acc_weaker is False
     assert result.acc_area_weaker is False
     assert result.valid_energy_weakening is False
+
+
+def test_detect_divergence_invalid_when_validator_fails_even_if_abc_candidate_true() -> None:
+    a = _leg(2, 6, Direction.UP, low=90.0, high=110.0)
+    b = _leg(7, 9, Direction.DOWN, low=98.0, high=109.0)
+    c = _leg(10, 14, Direction.UP, low=97.0, high=111.0)
+    abc = _abc(DivergenceDirection.BEARISH, a, b, c, abc_valid=True)
+
+    vacc = _vacc_with_values([0.0] * 30, [0.0] * 30)
+    candles = _make_flat_candles(length=25, close=100.0)
+    state = detect_divergence_from_abc(
+        abc,
+        candles,
+        vacc,
+        abc_validation=_abc_result(valid=False),
+    )
+    assert state.exists is False
+    assert state.grade == DivergenceGrade.INVALID
+    assert state.direction == DivergenceDirection.NONE
 
 
 def test_detect_divergence_requires_valid_energy_weakening_even_with_impulse() -> None:

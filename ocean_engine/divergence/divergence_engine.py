@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from ocean_divergence_classifier import classify_divergence
 from ocean_abc_validator import ABCSegment, ABCValidationResult
 from ocean_engine.energy.vacc_engine import (
     get_segment_acceleration_area,
@@ -494,41 +495,34 @@ def detect_divergence_from_abc(
 ) -> DivergenceState:
     """Convert an A-B-C candidate into official divergence state."""
 
-    if not abc.abc_valid:
-        return DivergenceState(
-            timeframe=abc.timeframe,
-            exists=False,
-            abc_valid=False,
-            direction=DivergenceDirection.NONE,
-            grade=DivergenceGrade.INVALID,
-            notes="A-B-C candidate is invalid.",
-        )
-    if abc_validation is not None and not abc_validation.valid:
-        return DivergenceState(
-            timeframe=abc.timeframe,
-            exists=False,
-            abc_valid=False,
-            direction=DivergenceDirection.NONE,
-            grade=DivergenceGrade.INVALID,
-            notes=f"A-B-C validator rejected candidate: {abc_validation.reason}",
-        )
-
     if abc_validation is None:
         abc_validation = _abc_validation_from_abc(abc, vacc_series=vacc_series)
+    if not abc.abc_valid:
+        abc_validation.valid = False
+        abc_validation.reason = abc_validation.reason or "A-B-C candidate is invalid."
+
     energy = compare_vacc_energy_a_vs_c(
         candles=candles,
         abc_result=abc_validation,
         vacc_series=vacc_series,
         trace=trace,
     )
-    weakening_count = energy.weakening_count
     impulse_confirmed, impulse_price, impulse_time = detect_opposite_impulse_details(candles=candles, abc=abc)
-    grade = grade_divergence(
-        abc_valid=abc.abc_valid,
-        weakening_count=weakening_count,
-        impulse_confirmed=impulse_confirmed,
+    classification = classify_divergence(
+        abc_result=abc_validation,
+        vacc_result=energy,
+        impulse_result=(impulse_confirmed, "STRONG" if impulse_confirmed else "NONE"),
+        carry_result=None,
+        trace=trace,
     )
-    exists = bool(abc.abc_valid and energy.valid_energy_weakening and impulse_confirmed)
+    grade = _classifier_grade_to_enum(classification.grade)
+    direction = (
+        DivergenceDirection.NONE
+        if not classification.abc_valid
+        else _classifier_direction_to_enum(classification.direction, fallback=abc.direction)
+    )
+    exists = bool(classification.official)
+    weakening_count = energy.weakening_count
 
     zone_text = ""
     divergence_price: float | None = None
@@ -541,12 +535,14 @@ def detect_divergence_from_abc(
             zone_text = f"{abc.segment_c.low:.2f}-{abc.segment_c.low:.2f}"
             divergence_price = abc.segment_c.low
         divergence_time_utc = _close_time_to_utc(abc.segment_c.end_time)
+    if classification.price_zone:
+        zone_text = classification.price_zone
 
     return DivergenceState(
         timeframe=abc.timeframe,
         exists=exists,
-        abc_valid=abc.abc_valid,
-        direction=abc.direction,
+        abc_valid=classification.abc_valid,
+        direction=direction,
         grade=grade,
         weakening_count=weakening_count,
         impulse_confirmed=impulse_confirmed,
@@ -560,12 +556,35 @@ def detect_divergence_from_abc(
         impulse_price=impulse_price,
         impulse_time_utc=_close_time_to_utc(impulse_time),
         notes=(
-            f"abc_valid={abc.abc_valid}, weakening={weakening_count}, "
+            f"abc_valid={classification.abc_valid}, weakening={weakening_count}, "
             f"impulse={impulse_confirmed}, vel_weaker={energy.vel_weaker}, "
             f"acc_weaker={energy.acc_weaker}, acc_area_weaker={energy.acc_area_weaker}, "
-            f"b_zero_reset={energy.b_zero_reset}, valid_energy_weakening={energy.valid_energy_weakening}"
+            f"b_zero_reset={energy.b_zero_reset}, valid_energy_weakening={energy.valid_energy_weakening}, "
+            f"classifier_grade={classification.grade}, role={classification.role}, reason={classification.reason}"
         ),
     )
+
+
+def _classifier_grade_to_enum(grade: str) -> DivergenceGrade:
+    value = str(grade or "").strip().upper()
+    if value == DivergenceGrade.ELITE.value:
+        return DivergenceGrade.ELITE
+    if value == DivergenceGrade.STRONG.value:
+        return DivergenceGrade.STRONG
+    if value == DivergenceGrade.MODERATE.value:
+        return DivergenceGrade.MODERATE
+    if value == DivergenceGrade.WEAK.value:
+        return DivergenceGrade.WEAK
+    return DivergenceGrade.INVALID
+
+
+def _classifier_direction_to_enum(direction: str, fallback: DivergenceDirection) -> DivergenceDirection:
+    value = str(direction or "").strip().upper()
+    if value == DivergenceDirection.BULLISH.value:
+        return DivergenceDirection.BULLISH
+    if value == DivergenceDirection.BEARISH.value:
+        return DivergenceDirection.BEARISH
+    return fallback if fallback in {DivergenceDirection.BULLISH, DivergenceDirection.BEARISH} else DivergenceDirection.NONE
 
 
 def _close_time_to_utc(close_time: int | None) -> str:

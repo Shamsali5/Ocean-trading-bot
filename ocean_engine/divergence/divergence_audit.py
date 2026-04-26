@@ -32,29 +32,20 @@ def default_divergence_state(timeframe: str) -> DivergenceState:
     return DivergenceState(timeframe=timeframe, notes="No valid A-B-C candidate.")
 
 
-def audit_timeframe_divergence(timeframe: str, structure: StructureState, vacc: VAccSeries) -> DivergenceState:
-    """Audit exactly one timeframe using only that timeframe inputs."""
+def audit_timeframe_divergence(
+    timeframe: str,
+    structure: StructureState,
+    vacc: VAccSeries,
+    trace: FrameworkAuditTrace | None = None,
+) -> DivergenceState:
+    """Audit one timeframe with strict same-timeframe A-B-C enforcement."""
 
-    if structure.timeframe and structure.timeframe != timeframe:
-        raise ValueError(f"Structure timeframe mismatch: expected {timeframe}, got {structure.timeframe}")
-    if vacc.timeframe and vacc.timeframe != timeframe:
-        raise ValueError(f"VAcc timeframe mismatch: expected {timeframe}, got {vacc.timeframe}")
-
-    candidates = find_abc_candidates(structure)
-    latest = select_latest_abc_candidate(candidates)
-    if latest is None:
-        return default_divergence_state(timeframe)
-
-    state = detect_divergence_from_abc(
-        abc=latest,
-        candles=structure.candles,
-        vacc_series=vacc,
+    return audit_timeframe_divergence_with_validator(
+        timeframe=timeframe,
+        structure=structure,
+        vacc=vacc,
         trace=trace,
     )
-    c_end = latest.segment_c.end_index if latest.segment_c is not None else latest.c_index
-    state.notes = f"{state.notes}; C ending at leg index {c_end}".strip("; ").strip()
-    state.timeframe = timeframe
-    return state
 
 
 def audit_timeframe_divergence_with_validator(
