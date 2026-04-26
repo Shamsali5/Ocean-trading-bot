@@ -72,7 +72,6 @@ def send_telegram_message(
         payload = {
             "chat_id": resolved_chat_id,
             "text": part,
-            "parse_mode": None,
         }
         try:
             response = requests.post(url, json=payload, timeout=15)

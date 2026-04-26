@@ -87,7 +87,7 @@ def test_send_posts_expected_url_and_payload(monkeypatch: pytest.MonkeyPatch) ->
     assert len(responses) == len(calls)
     assert all(call["url"] == "https://api.telegram.org/botbot-token/sendMessage" for call in calls)
     assert all(call["json"]["chat_id"] == "chat-id" for call in calls)
-    assert all(call["json"]["parse_mode"] is None for call in calls)
+    assert all("parse_mode" not in call["json"] for call in calls)
     assert all(call["timeout"] == 15 for call in calls)
     assert "".join(call["json"]["text"] for call in calls) == text
 

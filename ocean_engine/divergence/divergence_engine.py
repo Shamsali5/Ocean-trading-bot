@@ -162,6 +162,7 @@ def detect_divergence_from_abc(
         return DivergenceState(
             timeframe=abc.timeframe,
             exists=False,
+            abc_valid=False,
             direction=DivergenceDirection.NONE,
             grade=DivergenceGrade.INVALID,
             notes="A-B-C candidate is invalid.",
@@ -187,6 +188,7 @@ def detect_divergence_from_abc(
     return DivergenceState(
         timeframe=abc.timeframe,
         exists=exists,
+        abc_valid=abc.abc_valid,
         direction=abc.direction,
         grade=grade,
         weakening_count=weakening_count,
