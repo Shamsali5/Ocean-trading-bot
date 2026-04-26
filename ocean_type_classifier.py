@@ -191,7 +191,6 @@ def classify_type_3(range_result, breakout_acceptance_result, carry_result, trac
         and retest_or_acceptance
         and continuation_outside
         and accepted
-        and carry_resumes
         and timeframe is not None
         and direction in {"BULLISH", "BEARISH"}
     )
@@ -204,7 +203,7 @@ def classify_type_3(range_result, breakout_acceptance_result, carry_result, trac
             "Type 3 valid: range + breakout acceptance + outside continuation + carry resume."
             if valid
             else (
-                "Type 3 invalid: requires valid range, boundary break, acceptance/retest, outside continuation, and carry resume."
+                "Type 3 invalid: requires valid range, boundary break, acceptance/retest, and outside continuation."
             )
         ),
     )
@@ -218,7 +217,8 @@ def classify_type_3(range_result, breakout_acceptance_result, carry_result, trac
         else "INFO",
         details=(
             f"valid_range={valid_range}, accepted={accepted}, boundary_broken={boundary_broken}, "
-            f"retest_or_acceptance={retest_or_acceptance}, continuation_outside={continuation_outside}"
+            f"retest_or_acceptance={retest_or_acceptance}, continuation_outside={continuation_outside}, "
+            f"carry_resumes={carry_resumes}"
         ),
         function="classify_type_3",
     )
@@ -295,14 +295,15 @@ def _direction_from_breakout_or_carry(breakout_direction: str, carry_direction: 
 
 def _resolve_vacc_weakening(divergence_result: Any) -> bool:
     direct = _value_from_result(divergence_result, "valid_energy_weakening")
-    if direct is not None:
-        return bool(direct)
+    if direct is True:
+        return True
     weakening_count = _value_from_result(divergence_result, "weakening_count")
     if weakening_count is not None:
         try:
-            return int(weakening_count) >= 2
+            if int(weakening_count) >= 2:
+                return True
         except (TypeError, ValueError):
-            return False
+            pass
     flags = (
         _bool_from_result(divergence_result, "vel_divergence", fallback_keys=("velocity_weaker",)),
         _bool_from_result(divergence_result, "acc_divergence", fallback_keys=("acceleration_weaker",)),
@@ -310,18 +311,24 @@ def _resolve_vacc_weakening(divergence_result: Any) -> bool:
     )
     if sum(bool(flag) for flag in flags) >= 2:
         return True
-    # Official divergence rows already passed strict weakening gates upstream.
-    return bool(_bool_from_result(divergence_result, "official", fallback_keys=("exists",)))
+    # Legacy rows may not expose weakening flags; official/exists rows are treated as already gated.
+    return bool(
+        _bool_from_result(
+            divergence_result,
+            "official",
+            fallback_keys=("exists",),
+        )
+    )
 
 
 def _resolve_carry_started(carry_result: Any, *, allow_mature: bool) -> bool:
     state = str(_value_from_result(carry_result, "state") or "").upper()
     finished = bool(_bool_from_result(carry_result, "finished", fallback_keys=("carry_finished",)))
-    available = bool(_bool_from_result(carry_result, "lower_tf_carry_available"))
+    available = _value_from_result(carry_result, "lower_tf_carry_available")
     if state == "MATURE" and not allow_mature:
         return False
-    if available:
-        return not finished
+    if available is not None:
+        return bool(available) and not finished
     valid_states = {"FRESH", "ACTIVE", "MATURE"} if allow_mature else {"FRESH", "ACTIVE"}
     return state in valid_states and not finished
 
