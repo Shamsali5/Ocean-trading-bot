@@ -190,7 +190,41 @@ def test_divergence_formatter_shows_divergence_and_impulse_price_time() -> None:
     assert "Impulse Price/Time: 102.10 @ 2026-04-26T05:48:00Z" in text
 
 
-def test_next_watch_shows_return_to_range_pressure_on_failed_breakout() -> None:
+def test_divergence_formatter_lists_each_official_timeframe_event_details() -> None:
+    report = _sample_report()
+    report.divergence_audit = DivergenceAudit(
+        tf_4h=DivergenceState(
+            timeframe="4h",
+            exists=True,
+            abc_valid=True,
+            direction=DivergenceDirection.BEARISH,
+            grade=DivergenceGrade.MODERATE,
+            impulse_confirmed=True,
+            divergence_price=79400.0,
+            divergence_time_utc="2026-04-20T08:00:00Z",
+            impulse_price=78850.0,
+            impulse_time_utc="2026-04-20T12:00:00Z",
+        ),
+        tf_3m=DivergenceState(
+            timeframe="3m",
+            exists=True,
+            abc_valid=True,
+            direction=DivergenceDirection.BULLISH,
+            grade=DivergenceGrade.STRONG,
+            impulse_confirmed=True,
+            divergence_price=77880.0,
+            divergence_time_utc="2026-04-26T10:02:59.999000+00:00",
+            impulse_price=77992.1,
+            impulse_time_utc="2026-04-26T10:08:59.999000+00:00",
+        ),
+        selected_last_meaningful_tf="3m",
+    )
+    text = format_divergence_audit(report.divergence_audit)
+    assert "4H Div: 79,400.00 @ 2026-04-20T08:00:00Z | Imp: 78,850.00 @ 2026-04-20T12:00:00Z" in text
+    assert "3m Div: 77,880.00 @ 2026-04-26T10:02:59.999000+00:00 | Imp: 77,992.10 @ 2026-04-26T10:08:59.999000+00:00" in text
+
+
+def test_removed_next_watch_section_from_compact_report() -> None:
     report = _sample_report()
     report.structures = {
         "15m": StructureState(
@@ -204,7 +238,7 @@ def test_next_watch_shows_return_to_range_pressure_on_failed_breakout() -> None:
         )
     }
     text = format_compact_telegram_report(report)
-    assert "return-to-range pressure" in text.lower()
+    assert "NEXT WATCH" not in text
 
 
 def test_type3_report_displays_active_trade_yes() -> None:
@@ -306,14 +340,87 @@ def test_range_section_includes_upper_lower_boundaries_and_multitimeframe_notice
                 ownership=Direction.DOWN,
             ),
         ),
+        "15m": StructureState(
+            timeframe="15m",
+            range_state=RangeState(
+                timeframe="15m",
+                is_range=True,
+                active=True,
+                status="ACTIVE",
+                lower_edge=77280.0,
+                upper_edge=78182.8,
+                price_location="UPPER_EDGE",
+                ownership=Direction.UP,
+            ),
+        ),
+        "5m": StructureState(
+            timeframe="5m",
+            range_state=RangeState(
+                timeframe="5m",
+                is_range=True,
+                active=True,
+                status="ACTIVE",
+                lower_edge=77379.0,
+                upper_edge=78182.8,
+                price_location="MID",
+                ownership=Direction.UP,
+            ),
+        ),
+        "3m": StructureState(
+            timeframe="3m",
+            range_state=RangeState(
+                timeframe="3m",
+                is_range=True,
+                active=True,
+                status="ACTIVE",
+                lower_edge=77880.0,
+                upper_edge=78182.8,
+                price_location="MID",
+                ownership=Direction.DOWN,
+            ),
+        ),
     }
     text = format_compact_telegram_report(report)
-    assert "Active Ranges: 2" in text
-    assert "Multi-timeframe ranges: 4H,1H" in text
+    assert "Active Ranges: 3" in text
+    assert "Multi-timeframe ranges: 4H,1H,15m" in text
     assert "Upper: 79000.00" in text
     assert "Lower: 73000.00" in text
     assert "Upper: 78000.00" in text
     assert "Lower: 76000.00" in text
+    assert "\n5m | Active: YES" not in text
+    assert "\n3m | Active: YES" not in text
+
+
+def test_hierarchy_smallest_active_internal_move_uses_lowest_active_timeframe() -> None:
+    report = _sample_report()
+    report.story_state = None
+    report.active_trade_audit = ActiveTradeAudit(
+        tf_4h=ActiveTradeCandidate(
+            timeframe="4h",
+            exists=True,
+            origin_timeframe="4h",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            type_label="4H Bearish Type 1",
+            carry_timeframe="1h",
+            carry_state=CarryState.MATURE,
+            existing_hold_valid=True,
+        ),
+        tf_3m=ActiveTradeCandidate(
+            timeframe="3m",
+            exists=True,
+            origin_timeframe="3m",
+            direction=Direction.UP,
+            setup_type=SetupType.TYPE_1,
+            type_label="3m Bullish Type 1",
+            carry_timeframe="",
+            carry_state=CarryState.ACTIVE,
+            existing_hold_valid=True,
+        ),
+        selected_active_trade_tf="4h",
+    )
+    text = format_compact_telegram_report(report)
+    assert "Smallest Active Internal Move: 3m" in text
 
 
 def test_market_story_mentions_lower_tf_counter_move_at_range_bottom_with_demand() -> None:

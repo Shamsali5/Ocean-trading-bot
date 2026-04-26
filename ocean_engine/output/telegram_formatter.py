@@ -11,6 +11,7 @@ from ocean_engine.divergence.divergence_audit import (
 )
 from ocean_engine.models.enums import Direction, FinalAction
 from ocean_engine.models.market import (
+    ActiveTradeCandidate,
     ActiveTradeAudit,
     DecisionState,
     DivergenceAudit,
@@ -22,6 +23,7 @@ from ocean_engine.trade.active_trade_engine import active_trade_audit_summary
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
 TIMEFRAME_RANK = {"4h": 5, "1h": 4, "15m": 3, "5m": 2, "3m": 1}
+RANGE_SECTION_ORDER = ("4h", "1h", "15m")
 
 
 def format_final_action(decision: DecisionState) -> str:
@@ -70,7 +72,7 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
     if divergence_audit is None:
         return (
             "Audit: N/A\nLast Meaningful: N/A\nABC: N/A\nImpulse: N/A\n"
-            "Divergence Price/Time: N/A\nImpulse Price/Time: N/A\nGrade: N/A"
+            "Divergence Price/Time: N/A\nImpulse Price/Time: N/A\nPer-TF Price/Time: N/A\nGrade: N/A"
         )
 
     audit_line = divergence_audit_summary(divergence_audit)
@@ -100,6 +102,7 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
             timestamp=getattr(selected, "impulse_time_utc", ""),
         )
         grade = _format_enum_value(getattr(selected, "grade", "N/A"))
+    per_tf_details = _format_per_tf_divergence_price_time(divergence_audit)
     return (
         f"Audit: {audit_line}\n"
         f"Last Meaningful: {last_meaningful}\n"
@@ -107,6 +110,7 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
         f"Impulse: {impulse}\n"
         f"Divergence Price/Time: {divergence_price_time}\n"
         f"Impulse Price/Time: {impulse_price_time}\n"
+        f"{per_tf_details}\n"
         f"Grade: {grade}"
     )
 
@@ -133,7 +137,7 @@ def format_range_status(structures: dict[str, Any] | None) -> str:
         return "N/A"
 
     range_rows: list[tuple[str, Any]] = []
-    for tf in TIMEFRAME_ORDER:
+    for tf in RANGE_SECTION_ORDER:
         structure = structures.get(tf)
         if structure is None:
             continue
@@ -291,13 +295,13 @@ def format_hierarchy(report: MarketReport) -> str:
     controlling_origin = _text(getattr(story_state, "controlling_origin", "N/A"))
     execution = _text(getattr(story_state, "active_execution_trade", "N/A"))
     carry = _text(getattr(story_state, "carrying_timeframe", "N/A"))
-    current_tf = _text(getattr(story_state, "current_move_timeframe", "N/A"))
+    smallest_internal = _smallest_active_internal_move(report)
     return (
         f"Parent Move: {parent_tf} {parent_direction}\n"
         f"Controlling Origin: {controlling_origin}\n"
         f"Active Execution Trade: {execution}\n"
         f"Current Carrying Move: {carry}\n"
-        f"Smallest Active Internal Move: {current_tf}"
+        f"Smallest Active Internal Move: {smallest_internal}"
     )
 
 
@@ -384,8 +388,6 @@ def format_compact_telegram_report(report: MarketReport) -> str:
         f"POSITION MANAGEMENT\n{format_position_management(decision)}{flip_hint}\n\n"
         f"━━━━━━━━━━━━━━\n"
         f"MARKET HIERARCHY\n{format_hierarchy(report)}\n\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"NEXT WATCH\n{format_next_watch(report)}\n\n"
         f"━━━━━━━━━━━━━━\n"
         f"SUMMARY\n{_text(getattr(report, 'summary', ''), default='Deterministic report generated.')}"
     )
@@ -715,6 +717,49 @@ def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:
     if candidate.carry_direction in {Direction.UP, Direction.DOWN}:
         return candidate.carry_direction
     return Direction.UNCLEAR
+
+
+def _smallest_active_internal_move(report: MarketReport) -> str:
+    """Return the lowest-timeframe active trade row when available."""
+
+    active_trade_audit = getattr(report, "active_trade_audit", None) or _latest_active_trade_audit(report)
+    if active_trade_audit is not None:
+        mapping = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}
+        existing_tfs: list[str] = []
+        for tf in TIMEFRAME_ORDER:
+            candidate = getattr(active_trade_audit, mapping[tf], None)
+            if candidate is not None and getattr(candidate, "exists", False):
+                existing_tfs.append(tf)
+        if existing_tfs:
+            smallest = min(existing_tfs, key=lambda tf: TIMEFRAME_RANK.get(tf, 99))
+            return _normalize_tf(smallest)
+
+    story_state = getattr(report, "story_state", None)
+    fallback = _text(getattr(story_state, "current_move_timeframe", ""), default="N/A")
+    if fallback == "N/A":
+        return fallback
+    return _normalize_tf(fallback)
+
+
+def _format_per_tf_divergence_price_time(divergence_audit: DivergenceAudit) -> str:
+    """Render per-timeframe divergence/impulse event lines for official rows."""
+
+    lines: list[str] = []
+    for tf, state in _iter_divergence_rows(divergence_audit):
+        if not getattr(state, "exists", False):
+            continue
+        div_text = _format_price_time(
+            price=getattr(state, "divergence_price", None),
+            timestamp=getattr(state, "divergence_time_utc", ""),
+        )
+        imp_text = _format_price_time(
+            price=getattr(state, "impulse_price", None),
+            timestamp=getattr(state, "impulse_time_utc", ""),
+        )
+        lines.append(f"{_normalize_tf(tf)} Div: {div_text} | Imp: {imp_text}")
+    if not lines:
+        return "Per-TF Price/Time: N/A"
+    return "Per-TF Price/Time:\n" + "\n".join(lines)
 
 
 def _normalize_tf(tf: str) -> str:
