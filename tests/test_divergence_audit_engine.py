@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ocean_engine.divergence.divergence_audit import (
     audit_timeframe_divergence,
+    audit_timeframe_divergence_with_validator,
     build_divergence_audit,
     default_divergence_state,
     divergence_audit_summary,
@@ -166,3 +167,41 @@ def test_audit_timeframe_divergence_returns_default_when_no_candidate(monkeypatc
     assert result.exists is False
     assert result.grade == DivergenceGrade.INVALID
     assert result.timeframe == "5m"
+
+
+def test_strict_abc_validator_rejects_official_when_b_reset_fails(monkeypatch) -> None:
+    structure = _structure("1h")
+    vacc = _vacc("1h")
+    fake_candidate = type(
+        "FakeABC",
+        (),
+        {
+            "timeframe": "1h",
+            "direction": DivergenceDirection.BEARISH,
+            "segment_c": None,
+            "c_index": 0,
+            "abc_valid": True,
+        },
+    )()
+
+    class _FakeValidation:
+        valid = False
+        reason = "Segment B reset is not valid."
+
+    monkeypatch.setattr(
+        "ocean_engine.divergence.divergence_audit.find_abc_candidates",
+        lambda *_args, **_kwargs: [fake_candidate],
+    )
+    monkeypatch.setattr(
+        "ocean_engine.divergence.divergence_audit.select_latest_abc_candidate",
+        lambda *_args, **_kwargs: fake_candidate,
+    )
+    monkeypatch.setattr(
+        "ocean_engine.divergence.divergence_audit.validate_abc_for_timeframe",
+        lambda *args, **kwargs: _FakeValidation(),
+    )
+
+    result = audit_timeframe_divergence_with_validator("1h", structure, vacc)
+    assert result.exists is False
+    assert result.abc_valid is False
+    assert "Strict ABC validator failed" in result.notes

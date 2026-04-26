@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ocean_framework_v12_audit import FrameworkAuditTrace
+from ocean_abc_validator import validate_abc_for_timeframe
 from ocean_engine.divergence.abc_engine import find_abc_candidates, select_latest_abc_candidate
 from ocean_engine.divergence.divergence_engine import detect_divergence_from_abc
 from ocean_engine.models.enums import DivergenceDirection
@@ -54,9 +56,62 @@ def audit_timeframe_divergence(timeframe: str, structure: StructureState, vacc: 
     return state
 
 
+def audit_timeframe_divergence_with_validator(
+    timeframe: str,
+    structure: StructureState,
+    vacc: VAccSeries,
+    trace: FrameworkAuditTrace | None = None,
+) -> DivergenceState:
+    """Audit one timeframe while enforcing strict same-timeframe A-B-C validation."""
+
+    if structure.timeframe and structure.timeframe != timeframe:
+        raise ValueError(f"Structure timeframe mismatch: expected {timeframe}, got {structure.timeframe}")
+    if vacc.timeframe and vacc.timeframe != timeframe:
+        raise ValueError(f"VAcc timeframe mismatch: expected {timeframe}, got {vacc.timeframe}")
+
+    candidates = find_abc_candidates(structure)
+    latest = select_latest_abc_candidate(candidates)
+    if latest is None:
+        state = default_divergence_state(timeframe)
+        state.notes = "No valid A-B-C candidate."
+        return state
+
+    direction_hint = "BEARISH" if latest.direction == DivergenceDirection.BEARISH else "BULLISH"
+    validation = validate_abc_for_timeframe(
+        candles=structure.candles,
+        timeframe=timeframe,
+        direction=direction_hint,
+        pivots=latest,
+        vacc=vacc,
+        trace=trace,
+    )
+    if not validation.valid:
+        state = default_divergence_state(timeframe)
+        state.notes = f"Strict ABC validator failed: {validation.reason}"
+        return state
+
+    state = detect_divergence_from_abc(
+        abc=latest,
+        candles=structure.candles,
+        vacc_series=vacc,
+        abc_validation=validation,
+    )
+    c_end = latest.segment_c.end_index if latest.segment_c is not None else latest.c_index
+    state.notes = f"{state.notes}; C ending at leg index {c_end}; abc_reason={validation.reason}".strip("; ").strip()
+    state.timeframe = timeframe
+    if not state.abc_valid:
+        state.exists = False
+        state.impulse_confirmed = False
+        state.direction = DivergenceDirection.NONE
+        state.notes = f"{state.notes}; strict_abc_failed_after_base_audit".strip("; ").strip()
+        return state
+    return state
+
+
 def build_divergence_audit(
     structures: dict[str, StructureState],
     vacc_map: dict[str, VAccSeries],
+    trace: FrameworkAuditTrace | None = None,
 ) -> DivergenceAudit:
     """Build full divergence audit rows for canonical timeframes."""
 
@@ -67,7 +122,12 @@ def build_divergence_audit(
         if structure is None or vacc is None:
             rows[timeframe] = default_divergence_state(timeframe)
             continue
-        rows[timeframe] = audit_timeframe_divergence(timeframe=timeframe, structure=structure, vacc=vacc)
+        rows[timeframe] = audit_timeframe_divergence_with_validator(
+            timeframe=timeframe,
+            structure=structure,
+            vacc=vacc,
+            trace=trace,
+        )
 
     audit = DivergenceAudit(
         tf_4h=rows["4h"],

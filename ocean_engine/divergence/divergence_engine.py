@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ocean_abc_validator import ABCValidationResult
 from ocean_engine.energy.vacc_engine import (
     get_segment_acceleration_area,
     get_segment_velocity_energy,
@@ -211,6 +212,7 @@ def detect_divergence_from_abc(
     abc: ABCStructure,
     candles: list[Candle],
     vacc_series: VAccSeries,
+    abc_validation: ABCValidationResult | None = None,
 ) -> DivergenceState:
     """Convert an A-B-C candidate into official divergence state."""
 
@@ -222,6 +224,15 @@ def detect_divergence_from_abc(
             direction=DivergenceDirection.NONE,
             grade=DivergenceGrade.INVALID,
             notes="A-B-C candidate is invalid.",
+        )
+    if abc_validation is not None and not abc_validation.valid:
+        return DivergenceState(
+            timeframe=abc.timeframe,
+            exists=False,
+            abc_valid=False,
+            direction=DivergenceDirection.NONE,
+            grade=DivergenceGrade.INVALID,
+            notes=f"A-B-C validator rejected candidate: {abc_validation.reason}",
         )
 
     energy = compare_segment_energy(abc=abc, vacc_series=vacc_series)
