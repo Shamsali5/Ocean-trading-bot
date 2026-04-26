@@ -162,7 +162,7 @@ def test_scenario_3_bullish_type3_breakout_without_divergence() -> None:
     assert structures["15m"].range_state.status == "BROKEN_UP"
     assert candidate.exists is True
     assert candidate.setup_type == SetupType.TYPE_3
-    assert candidate.trade_function.name == "BREAKOUT"
+    assert candidate.trade_function.name == "BREAKOUT_TRADE"
     assert divergence_audit.tf_15m.exists is False
 
 
