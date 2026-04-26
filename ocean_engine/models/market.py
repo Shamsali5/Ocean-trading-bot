@@ -353,5 +353,6 @@ class MarketReport:
     story: MultiLevelStory | None = None
     story_state: StoryState | None = None
     decision: DecisionState | None = None
+    framework_audit_trace: object | None = None
     summary: str = ""
     metadata: Mapping[str, str] = field(default_factory=dict)
