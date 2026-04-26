@@ -18,6 +18,7 @@ from ocean_engine.models.market import (
     DivergenceState,
     StructureState,
 )
+from ocean_engine.divergence.divergence_audit import is_official_divergence
 from ocean_engine.trade.carry_engine import build_carry_status
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
@@ -51,13 +52,11 @@ def build_type1_candidate(
 ) -> ActiveTradeCandidate:
     """Build a Type 1 candidate from one official same-timeframe divergence."""
 
-    if not (
-        divergence.exists
-        and divergence.abc_valid
-        and divergence.impulse_confirmed
-        and divergence.direction in (DivergenceDirection.BULLISH, DivergenceDirection.BEARISH)
-    ):
-        return default_active_trade_candidate(timeframe)
+    if not is_official_divergence(divergence):
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Divergence row is not official for Type 1."
+        candidate.summary = f"{timeframe} no active trade candidate: divergence not official"
+        return candidate
 
     carry = build_carry_status(
         origin_tf=timeframe,
@@ -67,7 +66,10 @@ def build_type1_candidate(
     )
     carry_identifiable = carry.timeframe is not None and carry.timeframe != ""
     if not carry_identifiable:
-        return default_active_trade_candidate(timeframe)
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Carry timeframe is not identifiable."
+        candidate.summary = f"{timeframe} no active trade candidate: carry missing"
+        return candidate
 
     direction = Direction.UP if divergence.direction == DivergenceDirection.BULLISH else Direction.DOWN
     tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
@@ -142,6 +144,7 @@ def build_active_trade_audit(
     """Build active trade candidate rows per timeframe."""
 
     rows: dict[str, ActiveTradeCandidate] = {}
+    blocked_reasons: list[str] = []
     for timeframe in TIMEFRAME_ORDER:
         divergence = getattr(divergence_audit, TIMEFRAME_TO_AUDIT_FIELD[timeframe])
         rows[timeframe] = build_type1_candidate(
@@ -150,6 +153,16 @@ def build_active_trade_audit(
             structures=structures,
             divergence_audit=divergence_audit,
         )
+        if is_official_divergence(divergence) and not rows[timeframe].exists:
+            if divergence.direction == DivergenceDirection.BEARISH:
+                direction_label = "Bearish"
+            elif divergence.direction == DivergenceDirection.BULLISH:
+                direction_label = "Bullish"
+            else:
+                direction_label = "Unknown"
+            blocked_reasons.append(
+                f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} {direction_label} official divergence has no Type 1 candidate: {rows[timeframe].selection_reason}"
+            )
 
     audit = ActiveTradeAudit(
         tf_4h=rows["4h"],
@@ -160,9 +173,12 @@ def build_active_trade_audit(
     )
     selected = select_active_trade(audit)
     audit.selected_active_trade_tf = selected.origin_timeframe if selected is not None else None
-    audit.selection_reason = (
-        selected.selection_reason if selected is not None else "No existing active trade candidate."
-    )
+    if selected is not None:
+        audit.selection_reason = selected.selection_reason
+    elif blocked_reasons:
+        audit.selection_reason = "No active trade selected. " + " | ".join(blocked_reasons)
+    else:
+        audit.selection_reason = "No existing active trade candidate."
     return audit
 
 
