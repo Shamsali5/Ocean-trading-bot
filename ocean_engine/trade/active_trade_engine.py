@@ -116,10 +116,128 @@ def build_type1_candidate(
 
 
 def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
-    """Placeholder for Type 2 detection in future phases."""
+    """Build a Type 2 pullback-continuation candidate from a prior Type 1."""
 
     timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
-    return default_active_trade_candidate(timeframe or "")
+    structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
+    prior_type1 = _kwargs.get("prior_type1", None) if isinstance(_kwargs, dict) else None
+    if not timeframe:
+        return default_active_trade_candidate("")
+    if not isinstance(prior_type1, ActiveTradeCandidate):
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 requires a prior Type 1 candidate."
+        return candidate
+    if not (
+        prior_type1.exists
+        and prior_type1.setup_type == SetupType.TYPE_1
+        and prior_type1.origin_timeframe == timeframe
+        and prior_type1.direction in (DivergenceDirection.BULLISH, DivergenceDirection.BEARISH)
+    ):
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 requires prior same-timeframe Type 1."
+        return candidate
+
+    structure = structures.get(timeframe) if isinstance(structures, dict) else None
+    if structure is None or len(structure.legs) < 3:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 requires impulse, pullback, and continuation legs."
+        return candidate
+
+    legs = sorted(structure.legs, key=lambda leg: leg.end_index)
+    impulse_leg = legs[-3]
+    pullback_leg = legs[-2]
+    continuation_leg = legs[-1]
+
+    if prior_type1.direction == DivergenceDirection.BULLISH:
+        expected_direction = Direction.UP
+        pullback_direction = Direction.DOWN
+        carry_direction = Direction.UP
+        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bullish Type 2"
+        invalidation = "Bullish Type 2 invalidated when pullback breaks Type 1 origin low."
+    else:
+        expected_direction = Direction.DOWN
+        pullback_direction = Direction.UP
+        carry_direction = Direction.DOWN
+        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bearish Type 2"
+        invalidation = "Bearish Type 2 invalidated when pullback breaks Type 1 origin high."
+
+    if pullback_leg.direction != pullback_direction:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 requires pullback leg against Type 1 direction."
+        return candidate
+    if continuation_leg.direction != expected_direction:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 continuation impulse is missing."
+        return candidate
+
+    origin_low, origin_high = _parse_price_band(prior_type1.origin_price_zone)
+    if expected_direction == Direction.UP and origin_low is not None and pullback_leg.low < origin_low:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 invalid: pullback broke Type 1 origin low."
+        return candidate
+    if expected_direction == Direction.DOWN and origin_high is not None and pullback_leg.high > origin_high:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 invalid: pullback broke Type 1 origin high."
+        return candidate
+
+    impulse_size = abs(impulse_leg.high - impulse_leg.low)
+    pullback_size = abs(pullback_leg.high - pullback_leg.low)
+    continuation_size = abs(continuation_leg.high - continuation_leg.low)
+    if impulse_size <= 0.0 or pullback_size >= impulse_size:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 invalid: pullback did not weaken versus impulse."
+        return candidate
+    if continuation_size <= 0.0:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 continuation impulse is missing."
+        return candidate
+
+    carry_tf, carry_state, carry_finished = _type3_carry_context(
+        timeframe=timeframe,
+        carry_direction=carry_direction,
+        structures=structures if isinstance(structures, dict) else {},
+    )
+    if carry_state == CarryState.UNCLEAR:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Type 2 invalid: carry did not resume."
+        return candidate
+
+    too_late_to_chase = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
+    fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
+    existing_hold_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
+
+    trigger_price: float | None
+    if expected_direction == Direction.UP:
+        trigger_price = continuation_leg.high
+    else:
+        trigger_price = continuation_leg.low
+
+    return ActiveTradeCandidate(
+        timeframe=timeframe,
+        exists=True,
+        origin_timeframe=timeframe,
+        direction=prior_type1.direction,
+        setup_type=SetupType.TYPE_2,
+        trade_function=TradeFunction.PULLBACK_CONTINUATION,
+        type_label=type_label,
+        origin_price_zone=prior_type1.origin_price_zone,
+        confirmation_price=structure.current_price,
+        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        earliest_legal_trigger_price=trigger_price,
+        carry_timeframe=carry_tf,
+        carry_direction=carry_direction,
+        carry_state=carry_state,
+        fresh_entry_valid=fresh_entry_valid,
+        existing_hold_valid=existing_hold_valid,
+        too_late_to_chase=too_late_to_chase,
+        invalidation=invalidation,
+        current_status="ACTIVE" if existing_hold_valid else "WATCH",
+        selection_reason="Type 2 continuation after valid Type 1 pullback.",
+        summary=(
+            f"{type_label} | pullback_weaker={pullback_size < impulse_size} | "
+            f"carry={carry_tf or 'NONE'} {carry_state.value}"
+        ),
+    )
 
 
 def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
@@ -221,8 +339,18 @@ def build_active_trade_audit(
             structures=structures,
             divergence_audit=divergence_audit,
         )
+        type2_candidate = detect_type2_candidate(
+            timeframe=timeframe,
+            structures=structures,
+            prior_type1=type1_candidate,
+        )
         type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures)
-        rows[timeframe] = type1_candidate if type1_candidate.exists else type3_candidate
+        if type2_candidate.exists:
+            rows[timeframe] = type2_candidate
+        elif type1_candidate.exists:
+            rows[timeframe] = type1_candidate
+        else:
+            rows[timeframe] = type3_candidate
 
     audit = ActiveTradeAudit(
         tf_4h=rows["4h"],
@@ -325,4 +453,19 @@ def _type3_carry_context(
     if len(carry_structure.legs) <= 2:
         return (carry_tf, CarryState.FRESH, False)
     return (carry_tf, CarryState.ACTIVE, False)
+
+
+def _parse_price_band(price_band: str) -> tuple[float | None, float | None]:
+    text = price_band.strip()
+    if not text:
+        return (None, None)
+    if "-" not in text:
+        return (None, None)
+    left, right = text.split("-", 1)
+    try:
+        lower = float(left.strip())
+        upper = float(right.strip())
+    except ValueError:
+        return (None, None)
+    return (min(lower, upper), max(lower, upper))
 

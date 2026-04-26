@@ -5,6 +5,7 @@ from __future__ import annotations
 from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, DivergenceGrade, SetupType, TradeFunction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
+    ActiveTradeCandidate,
     CarryStatus,
     DivergenceAudit,
     DivergenceState,
@@ -16,6 +17,7 @@ from ocean_engine.trade.active_trade_engine import (
     active_trade_audit_summary,
     build_active_trade_audit,
     build_type1_candidate,
+    detect_type2_candidate,
     detect_type3_candidate,
     select_active_trade,
 )
@@ -64,6 +66,51 @@ def _type3_structure(
             acceptance_confirmed=True,
             first_accepted_close=accepted_close,
         ),
+    )
+
+
+def _type2_structure(
+    timeframe: str,
+    *,
+    prior_direction: Direction,
+    continuation_ok: bool = True,
+    pullback_breaks_origin: bool = False,
+) -> StructureState:
+    if prior_direction == Direction.UP:
+        impulse = Leg(start_index=0, end_index=3, direction=Direction.UP, high=112.0, low=100.0)
+        if pullback_breaks_origin:
+            pullback = Leg(start_index=3, end_index=5, direction=Direction.DOWN, high=111.0, low=98.0)
+        else:
+            pullback = Leg(start_index=3, end_index=5, direction=Direction.DOWN, high=111.0, low=102.0)
+        continuation = (
+            Leg(start_index=5, end_index=7, direction=Direction.UP, high=113.5, low=103.0)
+            if continuation_ok
+            else Leg(start_index=5, end_index=7, direction=Direction.DOWN, high=110.0, low=101.0)
+        )
+    else:
+        impulse = Leg(start_index=0, end_index=3, direction=Direction.DOWN, high=112.0, low=100.0)
+        if pullback_breaks_origin:
+            pullback = Leg(start_index=3, end_index=5, direction=Direction.UP, high=114.0, low=101.0)
+        else:
+            pullback = Leg(start_index=3, end_index=5, direction=Direction.UP, high=110.0, low=101.0)
+        continuation = (
+            Leg(start_index=5, end_index=7, direction=Direction.DOWN, high=109.0, low=99.0)
+            if continuation_ok
+            else Leg(start_index=5, end_index=7, direction=Direction.UP, high=111.0, low=102.0)
+        )
+    continuation_direction = continuation.direction
+    return StructureState(
+        timeframe=timeframe,
+        legs=[impulse, pullback, continuation],
+        active_leg=Leg(
+            start_index=continuation.start_index,
+            end_index=continuation.end_index,
+            direction=continuation_direction,
+            high=continuation.high,
+            low=continuation.low,
+            is_active=True,
+        ),
+        current_price=(continuation.high if continuation_direction == Direction.UP else continuation.low),
     )
 
 
@@ -151,6 +198,165 @@ def test_type3_does_not_require_divergence() -> None:
     audit = build_active_trade_audit(structures, DivergenceAudit())
     assert audit.tf_15m.exists is True
     assert audit.tf_15m.setup_type == SetupType.TYPE_3
+
+
+def test_bullish_type2_after_bullish_type1() -> None:
+    structures = {
+        "15m": _type2_structure("15m", prior_direction=Direction.UP),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.0),
+    }
+    prior = ActiveTradeCandidate(
+        timeframe="15m",
+        exists=True,
+        origin_timeframe="15m",
+        direction=DivergenceDirection.BULLISH,
+        setup_type=SetupType.TYPE_1,
+        trade_function=TradeFunction.DECOMPOSITION,
+        origin_price_zone="100.00-101.00",
+        carry_timeframe="5m",
+    )
+    candidate = detect_type2_candidate(
+        timeframe="15m",
+        structures=structures,
+        prior_type1=prior,
+    )
+    assert candidate.exists is True
+    assert candidate.setup_type == SetupType.TYPE_2
+    assert candidate.direction == DivergenceDirection.BULLISH
+    assert candidate.origin_timeframe == "15m"
+    assert candidate.carry_timeframe == "5m"
+
+
+def test_bearish_type2_after_bearish_type1() -> None:
+    structures = {
+        "15m": _type2_structure("15m", prior_direction=Direction.DOWN),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.DOWN, current_price=89.0),
+    }
+    prior = ActiveTradeCandidate(
+        timeframe="15m",
+        exists=True,
+        origin_timeframe="15m",
+        direction=DivergenceDirection.BEARISH,
+        setup_type=SetupType.TYPE_1,
+        trade_function=TradeFunction.DECOMPOSITION,
+        origin_price_zone="110.00-111.00",
+        carry_timeframe="5m",
+    )
+    candidate = detect_type2_candidate(
+        timeframe="15m",
+        structures=structures,
+        prior_type1=prior,
+    )
+    assert candidate.exists is True
+    assert candidate.setup_type == SetupType.TYPE_2
+    assert candidate.direction == DivergenceDirection.BEARISH
+    assert candidate.origin_timeframe == "15m"
+    assert candidate.carry_timeframe == "5m"
+
+
+def test_type2_invalid_when_type1_missing() -> None:
+    structures = {"15m": _type2_structure("15m", prior_direction=Direction.UP)}
+    candidate = detect_type2_candidate(timeframe="15m", structures=structures, prior_type1=None)
+    assert candidate.exists is False
+
+
+def test_type2_invalid_when_pullback_breaks_type1_origin() -> None:
+    structures = {
+        "15m": _type2_structure(
+            "15m",
+            prior_direction=Direction.UP,
+            pullback_breaks_origin=True,
+        )
+    }
+    prior = ActiveTradeCandidate(
+        timeframe="15m",
+        exists=True,
+        origin_timeframe="15m",
+        direction=DivergenceDirection.BULLISH,
+        setup_type=SetupType.TYPE_1,
+        origin_price_zone="100.00-101.00",
+    )
+    candidate = detect_type2_candidate(
+        timeframe="15m",
+        structures=structures,
+        prior_type1=prior,
+    )
+    assert candidate.exists is False
+
+
+def test_type2_invalid_when_continuation_impulse_missing() -> None:
+    structures = {
+        "15m": _type2_structure(
+            "15m",
+            prior_direction=Direction.UP,
+            continuation_ok=False,
+        )
+    }
+    prior = ActiveTradeCandidate(
+        timeframe="15m",
+        exists=True,
+        origin_timeframe="15m",
+        direction=DivergenceDirection.BULLISH,
+        setup_type=SetupType.TYPE_1,
+        origin_price_zone="100.00-101.00",
+    )
+    candidate = detect_type2_candidate(
+        timeframe="15m",
+        structures=structures,
+        prior_type1=prior,
+    )
+    assert candidate.exists is False
+
+
+def test_type2_uses_same_origin_and_next_lower_carry() -> None:
+    structures = {
+        "1h": _type2_structure("1h", prior_direction=Direction.DOWN),
+        "15m": _type3_structure("15m", status="ACTIVE", breakout_direction=Direction.DOWN, current_price=90.0),
+    }
+    prior = ActiveTradeCandidate(
+        timeframe="1h",
+        exists=True,
+        origin_timeframe="1h",
+        direction=DivergenceDirection.BEARISH,
+        setup_type=SetupType.TYPE_1,
+        origin_price_zone="110.00-111.00",
+        carry_timeframe="15m",
+    )
+    candidate = detect_type2_candidate(
+        timeframe="1h",
+        structures=structures,
+        prior_type1=prior,
+    )
+    assert candidate.exists is True
+    assert candidate.origin_timeframe == "1h"
+    assert candidate.carry_timeframe == "15m"
+
+
+def test_type2_does_not_require_new_divergence_row() -> None:
+    structures = {
+        "15m": _type2_structure("15m", prior_direction=Direction.UP),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=101.2),
+    }
+    divergence_audit = DivergenceAudit()
+    divergence_audit.tf_15m.exists = False
+
+    type1 = ActiveTradeCandidate(
+        timeframe="15m",
+        exists=True,
+        origin_timeframe="15m",
+        direction=DivergenceDirection.BULLISH,
+        setup_type=SetupType.TYPE_1,
+        origin_price_zone="100.00-101.00",
+        carry_timeframe="5m",
+    )
+    candidate = detect_type2_candidate(
+        timeframe="15m",
+        structures=structures,
+        prior_type1=type1,
+        divergence=divergence_audit.tf_15m,
+    )
+    assert candidate.exists is True
+    assert candidate.setup_type == SetupType.TYPE_2
 
 
 def test_failed_breakout_blocks_type3_candidate() -> None:
