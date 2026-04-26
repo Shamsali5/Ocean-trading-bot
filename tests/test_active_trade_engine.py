@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, DivergenceGrade, SetupType, TradeFunction
+from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, DivergenceGrade, SetupType, TradeFunction, ZoneType
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
     CarryStatus,
+    Candle,
     DivergenceAudit,
     DivergenceState,
     Leg,
     RangeState,
     StructureState,
+    SupplyDemandZone,
 )
 from ocean_engine.trade.active_trade_engine import (
     active_trade_audit_summary,
@@ -19,6 +21,7 @@ from ocean_engine.trade.active_trade_engine import (
     build_type1_candidate,
     detect_type2_candidate,
     detect_type3_candidate,
+    detect_zone_reaction_candidate,
     select_active_trade,
 )
 
@@ -125,6 +128,35 @@ def _official_divergence(timeframe: str, direction: DivergenceDirection, zone: s
         price_zone=zone,
         notes="abc_valid=True",
     )
+
+
+def _zone(zone_type: ZoneType, lower: float, upper: float, *, status: str = "REACTING", role: str = "impulse origin") -> SupplyDemandZone:
+    return SupplyDemandZone(
+        timeframe="15m",
+        zone_type=zone_type,
+        lower=lower,
+        upper=upper,
+        status=status,
+        role=role,
+        price_band=f"{lower:.2f}-{upper:.2f}",
+    )
+
+
+def _candles(closes: list[float]) -> list[Candle]:
+    candles: list[Candle] = []
+    for idx, close in enumerate(closes):
+        candles.append(
+            Candle(
+                open_time=idx,
+                open=close,
+                high=close + 0.4,
+                low=close - 0.4,
+                close=close,
+                volume=1.0,
+                close_time=idx,
+            )
+        )
+    return candles
 
 
 def _carry_status(state: CarryState, finished: bool = False) -> CarryStatus:
@@ -357,6 +389,148 @@ def test_type2_does_not_require_new_divergence_row() -> None:
     )
     assert candidate.exists is True
     assert candidate.setup_type == SetupType.TYPE_2
+
+
+def test_demand_zone_bullish_confirmation_creates_reaction_candidate() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=100.8,
+            legs=[
+                Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=99.5),
+                Leg(start_index=2, end_index=4, direction=Direction.UP, high=101.2, low=99.7),
+            ],
+            active_leg=Leg(start_index=2, end_index=4, direction=Direction.UP, high=101.2, low=99.7, is_active=True),
+            candles=_candles([102.0, 101.2, 100.4, 100.0, 100.8]),
+        ),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=100.9),
+    }
+    candidate = detect_zone_reaction_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=None,
+        zones=[_zone(ZoneType.DEMAND, 99.8, 100.2, status="REACTING")],
+    )
+    assert candidate.exists is True
+    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
+    assert candidate.direction == DivergenceDirection.BULLISH
+    assert candidate.carry_timeframe == "5m"
+
+
+def test_supply_zone_bearish_confirmation_creates_reaction_candidate() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=109.1,
+            legs=[
+                Leg(start_index=0, end_index=2, direction=Direction.UP, high=110.2, low=105.0),
+                Leg(start_index=2, end_index=4, direction=Direction.DOWN, high=109.8, low=108.9),
+            ],
+            active_leg=Leg(start_index=2, end_index=4, direction=Direction.DOWN, high=109.8, low=108.9, is_active=True),
+            candles=_candles([107.0, 108.1, 109.0, 109.5, 109.1]),
+        ),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.DOWN, current_price=108.8),
+    }
+    candidate = detect_zone_reaction_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=None,
+        zones=[_zone(ZoneType.SUPPLY, 108.9, 109.6, status="REACTING")],
+    )
+    assert candidate.exists is True
+    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
+    assert candidate.direction == DivergenceDirection.BEARISH
+    assert candidate.carry_timeframe == "5m"
+
+
+def test_zone_without_impulse_creates_no_trade() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=100.2,
+            legs=[Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=100.0)],
+            active_leg=Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=100.0, is_active=True),
+            candles=_candles([102.0, 101.0, 100.2]),
+        ),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=100.3),
+    }
+    candidate = detect_zone_reaction_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=None,
+        zones=[_zone(ZoneType.DEMAND, 100.0, 100.4, status="REACTING")],
+    )
+    assert candidate.exists is False
+
+
+def test_midpoint_zone_cannot_create_trade() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=100.7,
+            legs=[
+                Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=99.5),
+                Leg(start_index=2, end_index=4, direction=Direction.UP, high=101.2, low=99.7),
+            ],
+            active_leg=Leg(start_index=2, end_index=4, direction=Direction.UP, high=101.2, low=99.7, is_active=True),
+            candles=_candles([102.0, 101.2, 100.4, 100.0, 100.8]),
+        ),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=100.9),
+    }
+    candidate = detect_zone_reaction_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=None,
+        zones=[_zone(ZoneType.DEMAND, 99.8, 100.2, status="REACTING", role="range midpoint")],
+    )
+    assert candidate.exists is False
+
+
+def test_accepted_through_zone_cannot_create_trade() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=100.7,
+            legs=[
+                Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=106.0, low=99.5),
+                Leg(start_index=2, end_index=4, direction=Direction.UP, high=101.2, low=99.7),
+            ],
+            active_leg=Leg(start_index=2, end_index=4, direction=Direction.UP, high=101.2, low=99.7, is_active=True),
+            candles=_candles([102.0, 101.2, 100.4, 100.0, 100.8]),
+        ),
+        "5m": _type3_structure("5m", status="ACTIVE", breakout_direction=Direction.UP, current_price=100.9),
+    }
+    candidate = detect_zone_reaction_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=None,
+        zones=[_zone(ZoneType.DEMAND, 99.8, 100.2, status="ACCEPTED_THROUGH")],
+    )
+    assert candidate.exists is False
+
+
+def test_zone_reaction_uses_lower_timeframe_carry() -> None:
+    structures = {
+        "1h": StructureState(
+            timeframe="1h",
+            current_price=109.1,
+            legs=[
+                Leg(start_index=0, end_index=2, direction=Direction.UP, high=110.2, low=105.0),
+                Leg(start_index=2, end_index=4, direction=Direction.DOWN, high=109.8, low=108.9),
+            ],
+            active_leg=Leg(start_index=2, end_index=4, direction=Direction.DOWN, high=109.8, low=108.9, is_active=True),
+            candles=_candles([107.0, 108.1, 109.0, 109.5, 109.1]),
+        ),
+        "15m": _type3_structure("15m", status="ACTIVE", breakout_direction=Direction.DOWN, current_price=108.8),
+    }
+    candidate = detect_zone_reaction_candidate(
+        timeframe="1h",
+        structures=structures,
+        divergence=None,
+        zones=[SupplyDemandZone(timeframe="1h", zone_type=ZoneType.SUPPLY, lower=108.9, upper=109.6, status="REACTING", role="impulse origin", price_band="108.90-109.60")],
+    )
+    assert candidate.exists is True
+    assert candidate.carry_timeframe == "15m"
 
 
 def test_failed_breakout_blocks_type3_candidate() -> None:

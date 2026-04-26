@@ -11,8 +11,10 @@ from ocean_engine.models.market import (
     DivergenceAudit,
     DivergenceState,
     StructureState,
+    SupplyDemandZone,
 )
 from ocean_engine.trade.carry_engine import build_carry_status, get_carry_timeframe
+from ocean_engine.zones.supply_demand_engine import detect_supply_demand_zones
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
 TIMEFRAME_TO_AUDIT_FIELD = {
@@ -324,12 +326,155 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     )
 
 
+def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
+    """Build supply/demand reaction candidate when confirmation appears at zone."""
+
+    timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
+    structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
+    divergence = _kwargs.get("divergence", None) if isinstance(_kwargs, dict) else None
+    zones = _kwargs.get("zones", []) if isinstance(_kwargs, dict) else []
+    if not timeframe:
+        return default_active_trade_candidate("")
+    structure = structures.get(timeframe) if isinstance(structures, dict) else None
+    if structure is None or structure.current_price is None:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Zone reaction requires current structure context."
+        return candidate
+
+    if not isinstance(zones, list):
+        zones = []
+    meaningful_zones = [
+        zone
+        for zone in zones
+        if zone.timeframe == timeframe
+        and zone.status in {"REACTING", "TESTED"}
+        and "midpoint" not in str(zone.role).lower()
+    ]
+    if not meaningful_zones:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "No meaningful reacting/tested zone at timeframe."
+        return candidate
+
+    zone = meaningful_zones[0]
+    if zone.status == "ACCEPTED_THROUGH":
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Accepted-through zone cannot form reaction trade."
+        return candidate
+
+    direction: DivergenceDirection
+    carry_direction: Direction
+    needs_opposite_pull = False
+    if zone.zone_type.name == "DEMAND":
+        direction = DivergenceDirection.BULLISH
+        carry_direction = Direction.UP
+        needs_opposite_pull = True
+    else:
+        direction = DivergenceDirection.BEARISH
+        carry_direction = Direction.DOWN
+        needs_opposite_pull = True
+
+    if len(structure.legs) < 2:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Zone reaction requires pullback and restart legs."
+        return candidate
+    legs = sorted(structure.legs, key=lambda leg: leg.end_index)
+    pullback_leg = legs[-2]
+    restart_leg = legs[-1]
+
+    if needs_opposite_pull:
+        expected_pull = Direction.DOWN if direction == DivergenceDirection.BULLISH else Direction.UP
+        expected_restart = Direction.UP if direction == DivergenceDirection.BULLISH else Direction.DOWN
+        if pullback_leg.direction != expected_pull:
+            candidate = default_active_trade_candidate(timeframe)
+            candidate.selection_reason = "Zone touched without weakening pullback."
+            return candidate
+        if restart_leg.direction != expected_restart:
+            candidate = default_active_trade_candidate(timeframe)
+            candidate.selection_reason = "Zone reaction missing confirmation impulse."
+            return candidate
+
+    pullback_size = abs(pullback_leg.high - pullback_leg.low)
+    restart_size = abs(restart_leg.high - restart_leg.low)
+    weakens = pullback_size <= restart_size
+    if not weakens and structure.candles and len(structure.candles) >= 3:
+        closes = [candle.close for candle in structure.candles[-3:]]
+        if direction == DivergenceDirection.BULLISH:
+            weakens = closes[0] > closes[1] and closes[2] > closes[1]
+        else:
+            weakens = closes[0] < closes[1] and closes[2] < closes[1]
+    if not weakens:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Reaction invalid: pullback did not weaken."
+        return candidate
+
+    has_divergence_confirmation = bool(
+        isinstance(divergence, DivergenceState)
+        and divergence.exists
+        and divergence.impulse_confirmed
+        and (
+            (direction == DivergenceDirection.BULLISH and divergence.direction == DivergenceDirection.BULLISH)
+            or (direction == DivergenceDirection.BEARISH and divergence.direction == DivergenceDirection.BEARISH)
+        )
+    )
+    carry_tf, carry_state, carry_finished = _type3_carry_context(
+        timeframe=timeframe,
+        carry_direction=carry_direction,
+        structures=structures if isinstance(structures, dict) else {},
+    )
+    if carry_state == CarryState.UNCLEAR:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Zone reaction invalid: no lower-timeframe carry confirmation."
+        return candidate
+
+    too_late = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
+    fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
+    existing_hold_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
+
+    if direction == DivergenceDirection.BULLISH:
+        trigger = restart_leg.high
+        invalidation = "Demand reaction invalidated when price re-accepts below demand zone."
+        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bullish Zone Reaction"
+    else:
+        trigger = restart_leg.low
+        invalidation = "Supply reaction invalidated when price re-accepts above supply zone."
+        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bearish Zone Reaction"
+
+    setup_type = SetupType.TYPE_1 if has_divergence_confirmation else SetupType.NONE
+    return ActiveTradeCandidate(
+        timeframe=timeframe,
+        exists=True,
+        origin_timeframe=timeframe,
+        direction=direction,
+        setup_type=setup_type,
+        trade_function=TradeFunction.SUPPLY_DEMAND_REACTION,
+        type_label=type_label,
+        origin_price_zone=zone.price_band,
+        confirmation_price=structure.current_price,
+        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        earliest_legal_trigger_price=trigger,
+        carry_timeframe=carry_tf,
+        carry_direction=carry_direction,
+        carry_state=carry_state,
+        fresh_entry_valid=fresh_entry_valid,
+        existing_hold_valid=existing_hold_valid,
+        too_late_to_chase=too_late,
+        invalidation=invalidation,
+        current_status="ACTIVE" if existing_hold_valid else "WATCH",
+        selection_reason="Confirmed supply/demand reaction with impulse and carry.",
+        summary=(
+            f"{type_label} | zone={zone.price_band} | carry={carry_tf or 'NONE'} {carry_state.value} "
+            f"| pullback={pullback_size:.2f} restart={restart_size:.2f}"
+        ),
+    )
+
+
 def build_active_trade_audit(
     structures: dict[str, StructureState],
     divergence_audit: DivergenceAudit,
 ) -> ActiveTradeAudit:
     """Build active trade candidate rows per timeframe."""
 
+    zones = detect_supply_demand_zones(structures, divergence_audit)
     rows: dict[str, ActiveTradeCandidate] = {}
     for timeframe in TIMEFRAME_ORDER:
         divergence = getattr(divergence_audit, TIMEFRAME_TO_AUDIT_FIELD[timeframe])
@@ -344,11 +489,19 @@ def build_active_trade_audit(
             structures=structures,
             prior_type1=type1_candidate,
         )
+        zone_reaction_candidate = detect_zone_reaction_candidate(
+            timeframe=timeframe,
+            structures=structures,
+            divergence=divergence,
+            zones=zones,
+        )
         type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures)
         if type2_candidate.exists:
             rows[timeframe] = type2_candidate
         elif type1_candidate.exists:
             rows[timeframe] = type1_candidate
+        elif zone_reaction_candidate.exists:
+            rows[timeframe] = zone_reaction_candidate
         else:
             rows[timeframe] = type3_candidate
 

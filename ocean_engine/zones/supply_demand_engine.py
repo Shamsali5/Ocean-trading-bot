@@ -246,6 +246,30 @@ def deduplicate_zones(zones: list[SupplyDemandZone]) -> list[SupplyDemandZone]:
     return kept
 
 
+def is_tradeable_reaction_zone(zone: SupplyDemandZone, structure: StructureState | None) -> bool:
+    """Return whether a zone can be considered for reaction-trade confirmation."""
+
+    if structure is None:
+        return False
+    if zone.status in {"ACCEPTED_THROUGH", "UNTESTED"}:
+        return False
+    if zone.zone_type not in {ZoneType.DEMAND, ZoneType.SUPPLY}:
+        return False
+
+    range_state = structure.range_state
+    if range_state is not None and str(range_state.price_location).upper() == "MID":
+        return False
+
+    parsed = parse_price_band(zone.price_band)
+    if parsed is None:
+        return False
+    current_price = structure.current_price
+    if current_price is None:
+        return False
+    lower, upper = parsed
+    return lower <= current_price <= upper
+
+
 def _zone_rank(zone: SupplyDemandZone) -> tuple[int, int]:
     strength_score = {
         ZoneStrength.STRONG: 3,
