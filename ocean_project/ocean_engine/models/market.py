@@ -277,6 +277,7 @@ class MultiLevelStory:
     carrying_timeframe: str = ""
     higher_tf_status: str = "NONE"
     explanation: str = ""
+    valid: bool = True
     summary: str = ""
 
 
