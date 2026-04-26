@@ -598,13 +598,117 @@ def test_close_and_flip_when_selected_finished_and_opposite_fresh_exists() -> No
         tf_5m=opposite,
         selected_active_trade_tf="15m",
     )
+    divergence_audit = DivergenceAudit(
+        tf_5m=DivergenceState(
+            timeframe="5m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=True,
+            direction=DivergenceDirection.BEARISH,
+        )
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=divergence_audit,
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(direction=Direction.DOWN),
+        position_mode="LONG",
+    )
+    assert decision.final_action == FinalAction.CLOSE_AND_FLIP
+
+
+def test_management_gate_holds_long_even_when_fresh_buy_invalid() -> None:
+    selected = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.FRESH,
+        finished=False,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+    )
+    audit = ActiveTradeAudit(
+        tf_15m=selected,
+        selected_active_trade_tf="15m",
+    )
     decision = build_decision_state(
         structures={"15m": StructureState(timeframe="15m")},
         divergence_audit=DivergenceAudit(),
         active_trade_audit=audit,
         multi_level_story=MultiLevelStory(),
+        position_mode="LONG",
     )
-    assert decision.final_action == FinalAction.CLOSE_AND_FLIP
+    assert decision.final_action == FinalAction.HOLD_LONG
+    assert decision.management_state == "HOLD"
+
+
+def test_management_gate_opposite_divergence_without_impulse_is_close_watch() -> None:
+    selected = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.ACTIVE,
+        finished=False,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+    )
+    audit = ActiveTradeAudit(
+        tf_15m=selected,
+        selected_active_trade_tf="15m",
+    )
+    divergence_audit = DivergenceAudit(
+        tf_5m=DivergenceState(
+            timeframe="5m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=False,
+            direction=DivergenceDirection.BEARISH,
+        )
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=divergence_audit,
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+        position_mode="LONG",
+    )
+    assert decision.final_action == FinalAction.HOLD_LONG
+    assert decision.management_state == "CLOSE_WATCH"
+
+
+def test_management_gate_full_close_requires_opposite_divergence_and_impulse() -> None:
+    selected = _candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.EXHAUSTING,
+        finished=True,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+        type_label="15m Bearish Type 1",
+    )
+    audit = ActiveTradeAudit(
+        tf_15m=selected,
+        selected_active_trade_tf="15m",
+    )
+    divergence_audit = DivergenceAudit(
+        tf_5m=DivergenceState(
+            timeframe="5m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=True,
+            direction=DivergenceDirection.BULLISH,
+        )
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=divergence_audit,
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+        position_mode="SHORT",
+    )
+    assert decision.final_action == FinalAction.CLOSE_SHORT
+    assert decision.management_state == "FULL_CLOSE"
 
 
 def test_buy_not_downgraded_inside_decision_engine_for_move_context() -> None:
