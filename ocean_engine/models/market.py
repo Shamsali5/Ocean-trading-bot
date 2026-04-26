@@ -148,6 +148,7 @@ class DivergenceState:
 
     timeframe: str
     exists: bool = False
+    abc_valid: bool = False
     direction: DivergenceDirection = DivergenceDirection.NONE
     grade: DivergenceGrade = DivergenceGrade.INVALID
     weakening_count: int = 0
@@ -209,24 +210,40 @@ class CarryStatus:
 class ActiveTradeCandidate:
     """Candidate trade object before final decision."""
 
-    symbol: str
     timeframe: str
-    direction: Direction = Direction.UNCLEAR
+    exists: bool = False
+    origin_timeframe: str = ""
+    direction: DivergenceDirection = DivergenceDirection.NONE
     setup_type: SetupType = SetupType.NONE
     trade_function: TradeFunction = TradeFunction.NONE
-    entry: float | None = None
-    stop: float | None = None
-    take_profit: float | None = None
+    type_label: str = ""
+    origin_price_zone: str = ""
+    confirmation_price: float | None = None
+    confirmation_time_utc: str = ""
+    earliest_legal_trigger_price: float | None = None
+    carry_timeframe: str = ""
+    carry_direction: Direction = Direction.UNCLEAR
+    carry_state: CarryState = CarryState.UNCLEAR
+    fresh_entry_valid: bool = False
+    existing_hold_valid: bool = False
+    too_late_to_chase: bool = False
+    invalidation: str = ""
+    current_status: str = "INACTIVE"
+    selection_reason: str = ""
+    summary: str = ""
 
 
 @dataclass(slots=True)
 class ActiveTradeAudit:
     """Audit event for active-trade lock ownership."""
 
-    timeframe: str
-    is_valid: bool
-    reason: str
-    linked_setup: SetupType = SetupType.NONE
+    tf_4h: ActiveTradeCandidate = field(default_factory=lambda: ActiveTradeCandidate(timeframe="4h", origin_timeframe="4h"))
+    tf_1h: ActiveTradeCandidate = field(default_factory=lambda: ActiveTradeCandidate(timeframe="1h", origin_timeframe="1h"))
+    tf_15m: ActiveTradeCandidate = field(default_factory=lambda: ActiveTradeCandidate(timeframe="15m", origin_timeframe="15m"))
+    tf_5m: ActiveTradeCandidate = field(default_factory=lambda: ActiveTradeCandidate(timeframe="5m", origin_timeframe="5m"))
+    tf_3m: ActiveTradeCandidate = field(default_factory=lambda: ActiveTradeCandidate(timeframe="3m", origin_timeframe="3m"))
+    selected_active_trade_tf: str | None = None
+    selection_reason: str = ""
 
 
 @dataclass(slots=True)
