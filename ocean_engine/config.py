@@ -59,6 +59,21 @@ class EngineConfig:
     swing: SwingConfig = field(default_factory=SwingConfig)
 
 
+@dataclass(slots=True)
+class OceanConfig:
+    """Flat runner configuration for deterministic pipeline orchestration."""
+
+    symbols: list[str]
+    intervals: list[str]
+    candle_limits: dict[str, int]
+    data_dir: Path
+    results_dir: Path
+    vacc_period: int
+    vacc_smooth: int
+    telegram_mode: str
+    run_every_half_hour: bool
+
+
 def from_env() -> EngineConfig:
     """Build an :class:`EngineConfig` from process environment variables."""
 
@@ -80,4 +95,25 @@ def from_env() -> EngineConfig:
         results_dir=results_dir,
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
+    )
+
+
+def load_config() -> OceanConfig:
+    """Load flat runner configuration from the environment-backed engine config."""
+
+    engine = from_env()
+    limits: dict[str, int] = {}
+    for interval in engine.intervals:
+        limits[interval] = engine.candle_limits.get(interval, DEFAULT_LIMITS.get(interval, 240))
+
+    return OceanConfig(
+        symbols=list(engine.symbols),
+        intervals=list(engine.intervals),
+        candle_limits=limits,
+        data_dir=engine.data_dir,
+        results_dir=engine.results_dir,
+        vacc_period=engine.vacc.period,
+        vacc_smooth=engine.vacc.smooth,
+        telegram_mode=engine.telegram_mode,
+        run_every_half_hour=engine.run_every_half_hour,
     )
