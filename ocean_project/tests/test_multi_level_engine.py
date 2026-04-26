@@ -9,6 +9,7 @@ from ocean_engine.trade.multi_level_engine import (
     get_official_timeframes_by_direction,
     multi_level_summary,
 )
+from ocean_framework_v12_audit import FrameworkAuditTrace
 
 
 def _official_divergence(timeframe: str, direction: DivergenceDirection) -> DivergenceState:
@@ -264,3 +265,127 @@ def test_summary_includes_confirmed_control_execution_and_carry() -> None:
     assert "controlling" in summary.lower()
     assert "execution" in summary.lower()
     assert "carry" in summary.lower()
+
+
+def test_case1_only_15m_official_uses_15m_origin_and_5m_carry() -> None:
+    divergence_audit = DivergenceAudit(
+        tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
+    )
+    active_trade_audit = ActiveTradeAudit(
+        tf_15m=ActiveTradeCandidate(
+            timeframe="15m",
+            exists=True,
+            origin_timeframe="15m",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            trade_function=TradeFunction.DECOMPOSITION_TRADE,
+            carry_timeframe="5m",
+            carry_state="ACTIVE",
+            type_label="15m Bearish Type 1",
+            fresh_entry_valid=True,
+            existing_hold_valid=True,
+            confirmation_price=99.5,
+        ),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(divergence_audit, active_trade_audit)
+    assert story.active is False
+    assert story.higher_tf_status == "WEAKENING_CONTEXT_ONLY"
+    assert story.controlling_origin == "15m Bearish Type 1"
+    assert story.active_execution_trade == "15m Bearish Type 1"
+    assert story.carrying_timeframe == "5m"
+    assert "1H Bearish" not in story.controlling_origin
+
+
+def test_case2_only_1h_official_uses_1h_origin_and_15m_carry() -> None:
+    divergence_audit = DivergenceAudit(
+        tf_1h=_official_divergence("1h", DivergenceDirection.BEARISH),
+    )
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=ActiveTradeCandidate(
+            timeframe="1h",
+            exists=True,
+            origin_timeframe="1h",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            trade_function=TradeFunction.HIGHER_LEVEL_DIVERGENCE_TRADE,
+            carry_timeframe="15m",
+            carry_state="ACTIVE",
+            type_label="1H Bearish Type 1",
+            fresh_entry_valid=True,
+            existing_hold_valid=True,
+            confirmation_price=101.0,
+        ),
+        selected_active_trade_tf="1h",
+    )
+    story = build_multi_level_story(divergence_audit, active_trade_audit)
+    assert story.active is False
+    assert story.controlling_origin == "1H Bearish Type 1"
+    assert story.active_execution_trade == "1H Bearish Type 1"
+    assert story.carrying_timeframe == "15m"
+
+
+def test_case3_1h_and_15m_official_is_active_with_1h_control_15m_execution() -> None:
+    divergence_audit = DivergenceAudit(
+        tf_1h=_official_divergence("1h", DivergenceDirection.BEARISH),
+        tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
+    )
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=ActiveTradeCandidate(
+            timeframe="1h",
+            exists=True,
+            origin_timeframe="1h",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            trade_function=TradeFunction.HIGHER_LEVEL_DIVERGENCE_TRADE,
+            carry_timeframe="15m",
+            carry_state="ACTIVE",
+            type_label="1H Bearish Type 1",
+            fresh_entry_valid=True,
+            existing_hold_valid=True,
+            confirmation_price=101.0,
+        ),
+        tf_15m=ActiveTradeCandidate(
+            timeframe="15m",
+            exists=True,
+            origin_timeframe="15m",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            trade_function=TradeFunction.DECOMPOSITION_TRADE,
+            carry_timeframe="5m",
+            carry_state="ACTIVE",
+            type_label="15m Bearish Type 1",
+            fresh_entry_valid=True,
+            existing_hold_valid=True,
+            confirmation_price=99.5,
+        ),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(divergence_audit, active_trade_audit)
+    assert story.active is True
+    assert story.direction == Direction.DOWN
+    assert story.confirmed_timeframes == ["1h", "15m"]
+    assert story.controlling_origin == "1H Bearish Type 1"
+    assert story.active_execution_trade == "15m Bearish Type 1"
+    assert story.carrying_timeframe == "5m"
+
+
+def test_validator_emits_required_multilevel_audit_checks() -> None:
+    trace = FrameworkAuditTrace(symbol="BTCUSDT", timestamp="now")
+    divergence_audit = DivergenceAudit(
+        tf_1h=_official_divergence("1h", DivergenceDirection.BEARISH),
+        tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
+    )
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BEARISH, carry_tf="15m"),
+        tf_15m=_official_trade("15m", DivergenceDirection.BEARISH, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    _ = build_multi_level_story(divergence_audit, active_trade_audit, trace=trace)
+    check_names = {check.name for check in trace.checks}
+    assert "Each timeframe audited independently" in check_names
+    assert "No divergence copied across timeframes" in check_names
+    assert "Controlling origin separated" in check_names
+    assert "Active execution trade separated" in check_names
+    assert "Carry timeframe separated" in check_names
+    assert "Anti-drift rule passed" in check_names
