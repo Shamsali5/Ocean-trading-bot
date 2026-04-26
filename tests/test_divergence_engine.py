@@ -185,6 +185,10 @@ def test_valid_abc_with_impulse_but_no_weakness_is_weak_and_unofficial() -> None
     for idx in range(10, 15):
         velocity[idx] = 1.0
         acceleration[idx] = 0.2
+    # Keep B segment away from zero so zero-axis reset is not counted as weakening.
+    for idx in range(7, 10):
+        velocity[idx] = 0.6
+        acceleration[idx] = 0.05
     vacc = _vacc_with_values(velocity, acceleration)
 
     candles = _make_flat_candles(length=25, close=100.0)
