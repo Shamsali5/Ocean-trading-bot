@@ -270,10 +270,23 @@ class DecisionState:
     """Final deterministic decision payload before output formatting."""
 
     symbol: str
+    final_action: FinalAction = FinalAction.WAIT
+    management_state: str = "UNCLEAR"
+    reason: str = ""
+    guard_reasons: list[str] = field(default_factory=list)
+    valid: bool = True
     action: FinalAction = FinalAction.WAIT
     confidence: float = 0.0
     rationale: str = ""
     candidate: ActiveTradeCandidate | None = None
+
+    def __post_init__(self) -> None:
+        """Keep legacy ``action`` and canonical ``final_action`` synchronized."""
+
+        if self.final_action == FinalAction.WAIT and self.action != FinalAction.WAIT:
+            self.final_action = self.action
+        if self.action == FinalAction.WAIT and self.final_action != FinalAction.WAIT:
+            self.action = self.final_action
 
 
 @dataclass(slots=True)
