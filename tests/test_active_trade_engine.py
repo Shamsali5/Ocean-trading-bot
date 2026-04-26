@@ -222,7 +222,7 @@ def test_bullish_range_breakout_creates_bullish_type3_candidate() -> None:
     assert candidate.setup_type == SetupType.TYPE_3
     assert candidate.direction == DivergenceDirection.BULLISH
     assert candidate.type_label == "15m Bullish Type 3"
-    assert candidate.trade_function == TradeFunction.BREAKOUT
+    assert candidate.trade_function == TradeFunction.BREAKOUT_TRADE
     assert candidate.confirmation_price == 100.5
     assert candidate.confirmation_time_utc == "1970-01-01T00:00:03+00:00"
 
@@ -290,7 +290,7 @@ def test_bullish_type2_after_bullish_type1() -> None:
         origin_timeframe="15m",
         direction=DivergenceDirection.BULLISH,
         setup_type=SetupType.TYPE_1,
-        trade_function=TradeFunction.DECOMPOSITION,
+        trade_function=TradeFunction.DECOMPOSITION_TRADE,
         origin_price_zone="100.00-101.00",
         carry_timeframe="5m",
     )
@@ -317,7 +317,7 @@ def test_bearish_type2_after_bearish_type1() -> None:
         origin_timeframe="15m",
         direction=DivergenceDirection.BEARISH,
         setup_type=SetupType.TYPE_1,
-        trade_function=TradeFunction.DECOMPOSITION,
+        trade_function=TradeFunction.DECOMPOSITION_TRADE,
         origin_price_zone="110.00-111.00",
         carry_timeframe="5m",
     )
@@ -459,7 +459,7 @@ def test_demand_zone_bullish_confirmation_creates_reaction_candidate() -> None:
         zones=[_zone(ZoneType.DEMAND, 99.8, 100.2, status="REACTING")],
     )
     assert candidate.exists is True
-    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
+    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION_TRADE
     assert candidate.direction == DivergenceDirection.BULLISH
     assert candidate.carry_timeframe == "5m"
 
@@ -485,7 +485,7 @@ def test_supply_zone_bearish_confirmation_creates_reaction_candidate() -> None:
         zones=[_zone(ZoneType.SUPPLY, 108.9, 109.6, status="REACTING")],
     )
     assert candidate.exists is True
-    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION
+    assert candidate.trade_function == TradeFunction.SUPPLY_DEMAND_REACTION_TRADE
     assert candidate.direction == DivergenceDirection.BEARISH
     assert candidate.carry_timeframe == "5m"
 
@@ -846,7 +846,7 @@ def test_range_rejection_candidate_created_at_upper_edge_with_bearish_rejection(
     }
     candidate = detect_range_rejection_candidate(timeframe="15m", structures=structures)
     assert candidate.exists is True
-    assert candidate.trade_function == TradeFunction.RANGE_REJECTION
+    assert candidate.trade_function == TradeFunction.RANGE_REJECTION_TRADE
     assert candidate.direction == Direction.DOWN
 
 
@@ -885,5 +885,5 @@ def test_upgrade_candidate_created_for_upgrade_risk_context() -> None:
     }
     candidate = detect_upgrade_candidate(timeframe="15m", structures=structures)
     assert candidate.exists is True
-    assert candidate.trade_function == TradeFunction.UPGRADE
+    assert candidate.trade_function == TradeFunction.UPGRADE_TRADE
     assert candidate.fresh_entry_valid is False

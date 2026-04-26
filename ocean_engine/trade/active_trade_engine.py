@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ocean_impulse_acceptance import validate_breakout_acceptance
+from ocean_trade_function_classifier import TradeFunctionResult, classify_trade_function
 from ocean_zone_engine import ZoneResult, zone_allows_trade
 from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, SetupType, TradeFunction
 from ocean_engine.models.market import (
@@ -43,6 +44,62 @@ def default_active_trade_candidate(timeframe: str) -> ActiveTradeCandidate:
     )
 
 
+def _to_trade_function(value: str) -> TradeFunction:
+    """Map classifier string output to canonical enum value."""
+
+    try:
+        return TradeFunction(value)
+    except ValueError:
+        return TradeFunction.NONE
+
+
+def _classify_candidate_trade_function(
+    *,
+    move_context: object | None,
+    type_label: str,
+    type_valid: bool,
+    range_result: object | None,
+    zone_results: list[object] | None,
+    candidate_kind: str,
+    controlling_level_divergence: bool = False,
+    decomposition_context: bool = False,
+    divergence_confirmed: bool = False,
+    impulse_confirmed: bool = False,
+    carry_confirmed: bool = False,
+    structure_confirmed: bool = False,
+    zone_present: bool = False,
+    range_edge_rejection: bool = False,
+    upgrade_ready: bool = False,
+    upgrade_early: bool = False,
+    trace: FrameworkAuditTrace | None = None,
+) -> TradeFunctionResult:
+    """Run centralized trade-function classifier with normalized payload."""
+
+    return classify_trade_function(
+        move_context=move_context,
+        type_classification={
+            "type_label": type_label,
+            "valid": type_valid,
+        },
+        range_result=range_result,
+        zone_results=zone_results or [],
+        multi_level_result={
+            "candidate_kind": candidate_kind,
+            "controlling_level_divergence": controlling_level_divergence,
+            "decomposition_context": decomposition_context,
+            "divergence_confirmed": divergence_confirmed,
+            "impulse_confirmed": impulse_confirmed,
+            "carry_confirmed": carry_confirmed,
+            "structure_confirmed": structure_confirmed,
+            "zone_present": zone_present,
+            "range_edge_rejection": range_edge_rejection,
+            "upgrade_ready": upgrade_ready,
+            "upgrade_early": upgrade_early,
+        },
+        trace=trace,
+    )
+
+
 def build_type1_candidate(
     timeframe: str,
     divergence: DivergenceState,
@@ -75,9 +132,6 @@ def build_type1_candidate(
     tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
     dir_label = "Bullish" if divergence.direction == DivergenceDirection.BULLISH else "Bearish"
     type_label = f"{tf_label} {dir_label} Type 1"
-    trade_function = (
-        TradeFunction.HIGHER_TF_DIVERGENCE if timeframe in {"4h", "1h"} else TradeFunction.DECOMPOSITION
-    )
 
     finished = carry.finished
     too_late = carry.state in {CarryState.MATURE, CarryState.EXHAUSTING} or finished
@@ -97,6 +151,27 @@ def build_type1_candidate(
 
     start_price = divergence.impulse_price if divergence.impulse_price is not None else divergence.divergence_price
     start_time = divergence.impulse_time_utc or divergence.divergence_time_utc
+
+    trade_function_result = _classify_candidate_trade_function(
+        move_context=None,
+        type_label="TYPE_1",
+        type_valid=True,
+        range_result=getattr(structures.get(timeframe), "range_state", None),
+        zone_results=[],
+        candidate_kind="TYPE1",
+        controlling_level_divergence=timeframe in {"4h", "1h"},
+        decomposition_context=timeframe not in {"4h", "1h"},
+        divergence_confirmed=True,
+        impulse_confirmed=bool(divergence.impulse_confirmed),
+        carry_confirmed=bool(carry_identifiable and not carry.finished),
+        structure_confirmed=True,
+        trace=trace,
+    )
+    trade_function = _to_trade_function(trade_function_result.trade_function)
+    if trade_function == TradeFunction.NONE:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = trade_function_result.reason
+        return candidate
 
     return ActiveTradeCandidate(
         timeframe=timeframe,
@@ -132,6 +207,7 @@ def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
     structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
     prior_type1 = _kwargs.get("prior_type1", None) if isinstance(_kwargs, dict) else None
+    trace = _kwargs.get("trace", None) if isinstance(_kwargs, dict) else None
     if not timeframe:
         return default_active_trade_candidate("")
     if not isinstance(prior_type1, ActiveTradeCandidate):
@@ -223,13 +299,34 @@ def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     else:
         trigger_price = continuation_leg.low
 
+    trade_function_result = _classify_candidate_trade_function(
+        move_context=None,
+        type_label="TYPE_2",
+        type_valid=True,
+        range_result=getattr(structures.get(timeframe), "range_state", None),
+        zone_results=[],
+        candidate_kind="TYPE2",
+        controlling_level_divergence=False,
+        decomposition_context=False,
+        divergence_confirmed=False,
+        impulse_confirmed=True,
+        carry_confirmed=bool(carry_state != CarryState.UNCLEAR and not carry_finished),
+        structure_confirmed=True,
+        trace=trace,
+    )
+    trade_function = _to_trade_function(trade_function_result.trade_function)
+    if trade_function == TradeFunction.NONE:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = trade_function_result.reason
+        return candidate
+
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
         direction=prior_type1.direction,
         setup_type=SetupType.TYPE_2,
-        trade_function=TradeFunction.PULLBACK_CONTINUATION,
+        trade_function=trade_function,
         type_label=type_label,
         origin_price_zone=prior_type1.origin_price_zone,
         confirmation_price=trigger_price,
@@ -329,13 +426,32 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         index=range_state.first_break_index,
     )
 
+    trade_function_result = _classify_candidate_trade_function(
+        move_context=None,
+        type_label="TYPE_3",
+        type_valid=True,
+        range_result=range_state,
+        zone_results=[],
+        candidate_kind="TYPE3",
+        impulse_confirmed=True,
+        carry_confirmed=bool(carry_state != CarryState.UNCLEAR and not carry_finished),
+        structure_confirmed=True,
+        range_edge_rejection=bool(range_state.price_location in {"UPPER_EDGE", "LOWER_EDGE"}),
+        trace=_kwargs.get("trace", None) if isinstance(_kwargs, dict) else None,
+    )
+    trade_function = _to_trade_function(trade_function_result.trade_function)
+    if trade_function == TradeFunction.NONE:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = trade_function_result.reason
+        return candidate
+
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
         direction=direction,
         setup_type=SetupType.TYPE_3,
-        trade_function=TradeFunction.BREAKOUT,
+        trade_function=trade_function,
         type_label=type_label,
         origin_price_zone=breakout_band,
         confirmation_price=trigger_price,
@@ -613,13 +729,32 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bearish Zone Reaction"
 
     setup_type = SetupType.TYPE_1 if has_divergence_confirmation else SetupType.NONE
+    trade_function_result = _classify_candidate_trade_function(
+        move_context=None,
+        type_label="TYPE_1" if setup_type == SetupType.TYPE_1 else "NONE",
+        type_valid=bool(setup_type == SetupType.TYPE_1),
+        range_result=range_state,
+        zone_results=[zone_result],
+        candidate_kind="ZONE_REACTION",
+        divergence_confirmed=has_divergence_confirmation,
+        impulse_confirmed=bool(restart_size > 0.0),
+        carry_confirmed=bool(carry_state != CarryState.UNCLEAR and not carry_finished),
+        structure_confirmed=True,
+        zone_present=True,
+        trace=trace,
+    )
+    trade_function = _to_trade_function(trade_function_result.trade_function)
+    if trade_function == TradeFunction.NONE:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = trade_function_result.reason
+        return candidate
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
         direction=direction,
         setup_type=setup_type,
-        trade_function=TradeFunction.SUPPLY_DEMAND_REACTION,
+        trade_function=trade_function,
         type_label=type_label,
         origin_price_zone=zone.price_band,
         confirmation_price=trigger,
@@ -698,13 +833,33 @@ def detect_range_rejection_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     existing_hold_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
     tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
     origin_band = f"{edge:.2f}-{edge:.2f}" if isinstance(edge, (int, float)) else ""
+    trade_function_result = _classify_candidate_trade_function(
+        move_context=None,
+        type_label="NONE",
+        type_valid=True,
+        range_result=range_state,
+        zone_results=[],
+        candidate_kind="RANGE_REJECTION",
+        divergence_confirmed=True,
+        impulse_confirmed=True,
+        carry_confirmed=bool(carry_state != CarryState.UNCLEAR and not carry_finished),
+        structure_confirmed=True,
+        range_edge_rejection=True,
+        trace=_kwargs.get("trace", None) if isinstance(_kwargs, dict) else None,
+    )
+    trade_function = _to_trade_function(trade_function_result.trade_function)
+    if trade_function == TradeFunction.NONE:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = trade_function_result.reason
+        return candidate
+
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
         direction=direction,
         setup_type=SetupType.NONE,
-        trade_function=TradeFunction.RANGE_REJECTION,
+        trade_function=trade_function,
         type_label=f"{tf_label} {dir_label} Range Rejection",
         origin_price_zone=origin_band,
         confirmation_price=trigger,
@@ -758,13 +913,33 @@ def detect_upgrade_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
 
     dir_label = "Bullish" if carry_direction == Direction.UP else "Bearish"
     tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
+    trade_function_result = _classify_candidate_trade_function(
+        move_context=None,
+        type_label="NONE",
+        type_valid=True,
+        range_result=range_state,
+        zone_results=[],
+        candidate_kind="UPGRADE",
+        impulse_confirmed=bool(structure.active_leg is not None),
+        carry_confirmed=bool(carry_state != CarryState.UNCLEAR and not carry_finished),
+        structure_confirmed=True,
+        upgrade_ready=True,
+        upgrade_early=False,
+        trace=_kwargs.get("trace", None) if isinstance(_kwargs, dict) else None,
+    )
+    trade_function = _to_trade_function(trade_function_result.trade_function)
+    if trade_function == TradeFunction.NONE:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = trade_function_result.reason
+        return candidate
+
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
         direction=carry_direction,
         setup_type=SetupType.NONE,
-        trade_function=TradeFunction.UPGRADE,
+        trade_function=trade_function,
         type_label=f"{tf_label} {dir_label} Upgrade Attempt",
         origin_price_zone=f"{range_state.lower_edge:.2f}-{range_state.upper_edge:.2f}"
         if isinstance(range_state.lower_edge, (int, float)) and isinstance(range_state.upper_edge, (int, float))
@@ -808,6 +983,7 @@ def build_active_trade_audit(
             timeframe=timeframe,
             structures=structures,
             prior_type1=type1_candidate,
+            trace=trace,
         )
         zone_reaction_candidate = detect_zone_reaction_candidate(
             timeframe=timeframe,
@@ -819,11 +995,13 @@ def build_active_trade_audit(
         range_rejection_candidate = detect_range_rejection_candidate(
             timeframe=timeframe,
             structures=structures,
+            trace=trace,
         )
-        type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures)
+        type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures, trace=trace)
         upgrade_candidate = detect_upgrade_candidate(
             timeframe=timeframe,
             structures=structures,
+            trace=trace,
         )
         if type2_candidate.exists:
             rows[timeframe] = type2_candidate

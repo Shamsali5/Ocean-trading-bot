@@ -149,7 +149,11 @@ def test_market_story_summarizes_all_timeframes_current_state() -> None:
 def test_compact_report_includes_active_trade_audit() -> None:
     text = format_compact_telegram_report(_sample_report())
     assert "ACTIVE TRADE" in text
-    assert "Function: NONE" in text or "Function: DECOMPOSITION" in text or "Function: BREAKOUT" in text
+    assert (
+        "Function: NONE" in text
+        or "Function: DECOMPOSITION TRADE" in text
+        or "Function: BREAKOUT TRADE" in text
+    )
 
 
 def test_compact_report_includes_multi_level_story() -> None:
@@ -257,7 +261,7 @@ def test_removed_next_watch_section_from_compact_report() -> None:
 def test_type3_report_displays_active_trade_yes() -> None:
     report = _sample_report()
     report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_3
-    report.active_trade_audit.tf_15m.trade_function = "BREAKOUT"
+    report.active_trade_audit.tf_15m.trade_function = "BREAKOUT_TRADE"
     report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 3"
     report.active_trade_audit.tf_15m.fresh_entry_valid = False
     report.active_trade_audit.tf_15m.existing_hold_valid = True
@@ -266,7 +270,7 @@ def test_type3_report_displays_active_trade_yes() -> None:
     report.active_trade_audit.tf_15m.confirmation_time_utc = "2026-04-26T10:15:00Z"
     text = format_compact_telegram_report(report)
     assert "Active Trade: YES" in text
-    assert "Function: BREAKOUT" in text
+    assert "Function: BREAKOUT TRADE" in text
     assert "Fresh Entry: NO" in text
     assert "Valid Hold: YES" in text
     assert "Too Late: YES" in text
@@ -276,31 +280,31 @@ def test_type3_report_displays_active_trade_yes() -> None:
 def test_type2_report_displays_pullback_continuation() -> None:
     report = _sample_report()
     report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_2
-    report.active_trade_audit.tf_15m.trade_function = "PULLBACK_CONTINUATION"
+    report.active_trade_audit.tf_15m.trade_function = "PULLBACK_CONTINUATION_TRADE"
     report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 2"
     text = format_compact_telegram_report(report)
     assert "Type: TYPE 2" in text
-    assert "Function: PULLBACK CONTINUATION" in text
+    assert "Function: PULLBACK CONTINUATION TRADE" in text
 
 
 def test_type1_report_displays_divergence_function() -> None:
     report = _sample_report()
     report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_1
-    report.active_trade_audit.tf_15m.trade_function = "HIGHER_TF_DIVERGENCE"
+    report.active_trade_audit.tf_15m.trade_function = "HIGHER_LEVEL_DIVERGENCE_TRADE"
     text = format_compact_telegram_report(report)
     assert "Type: TYPE 1" in text
-    assert "Function: HIGHER TF DIVERGENCE" in text
+    assert "Function: HIGHER LEVEL DIVERGENCE TRADE" in text
 
 
 def test_no_divergence_but_type3_exists_displays_cleanly() -> None:
     report = _sample_report()
     report.divergence_audit = DivergenceAudit()
     report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_3
-    report.active_trade_audit.tf_15m.trade_function = "BREAKOUT"
+    report.active_trade_audit.tf_15m.trade_function = "BREAKOUT_TRADE"
     report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 3"
     text = format_compact_telegram_report(report)
     assert "DIVERGENCE\nAudit: 4H:No | 1H:No | 15m:No | 5m:No | 3m:No" in text
-    assert "Function: BREAKOUT" in text
+    assert "Function: BREAKOUT TRADE" in text
 
 
 def test_range_ownership_appears() -> None:
