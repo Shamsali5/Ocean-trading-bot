@@ -7,6 +7,7 @@ from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
     DivergenceAudit,
+    MoveContext,
     MultiLevelStory,
     RangeState,
     StoryState,
@@ -143,5 +144,35 @@ def test_summary_includes_parent_current_origin_and_carry() -> None:
     assert "parent=" in text
     assert "current=" in text
     assert "origin=" in text
-    assert "carry=" in text
+    assert "with_parent" in text
+
+
+def test_move_context_separates_parent_and_current_fields() -> None:
+    structures = {
+        "4h": _structure("4h", direction=Direction.UP, market_state=MarketState.RANGE),
+        "15m": _structure("15m", direction=Direction.DOWN, market_state=MarketState.TRANSITION),
+    }
+    audit = ActiveTradeAudit(
+        tf_15m=_candidate(
+            timeframe="15m",
+            direction=Direction.DOWN,
+            setup_type=SetupType.TYPE_1,
+            carry_timeframe="5m",
+        ),
+        selected_active_trade_tf="15m",
+    )
+    story = build_story_state(
+        structures=structures,
+        divergence_audit=DivergenceAudit(),
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+        range_states=None,
+        zones=[],
+    )
+    assert isinstance(story.move_context, MoveContext)
+    assert story.move_context.parent_timeframe == "4h"
+    assert story.move_context.current_timeframe == "15m"
+    assert story.move_context.current_origin == "DIVERGENCE"
+    assert story.move_context.current_origin_price_zone is None
+    assert story.move_context.current_with_parent is False
 

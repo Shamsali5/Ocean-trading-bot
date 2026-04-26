@@ -226,3 +226,38 @@ def test_wait_action_not_overridden_when_high_timeframe_context_missing(tmp_path
 
     assert report.decision.final_action == FinalAction.WAIT
     assert report.decision.reason == "No executable setup."
+
+
+def test_buy_forced_to_wait_when_parent_current_separation_is_unclear(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    report.decision.final_action = FinalAction.BUY
+    report.decision.action = FinalAction.BUY
+    report.decision.reason = "Synthetic buy for move-separation guard test."
+
+    report.move_context = report.move_context.__class__(
+        parent_direction="UP",
+        parent_timeframe="4h",
+        parent_state="TREND",
+        parent_active=True,
+        current_direction="UP",
+        current_timeframe="15m",
+        current_state="TREND",
+        current_origin="UNCLEAR",
+        current_origin_price_zone=None,
+        current_with_parent=None,
+        summary="Parent/current separation unclear.",
+    )
+    trace = report.framework_audit_trace
+    assert trace is not None
+
+    telegram_runner.apply_parent_current_separation_guard(
+        decision=report.decision,
+        move_context=report.move_context,
+        trace=trace,
+    )
+
+    assert report.decision.final_action == FinalAction.WAIT
+    assert report.decision.action == FinalAction.WAIT
+    assert "Parent/current move separation unclear" in report.decision.reason

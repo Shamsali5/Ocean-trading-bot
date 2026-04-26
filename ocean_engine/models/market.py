@@ -280,6 +280,23 @@ class MultiLevelStory:
 
 
 @dataclass(slots=True)
+class MoveContext:
+    """Separated parent/current move context for framework decisions."""
+
+    parent_direction: str = "UNCLEAR"
+    parent_timeframe: str = ""
+    parent_state: str = "UNCLEAR"
+    parent_active: bool | None = None
+    current_direction: str = "UNCLEAR"
+    current_timeframe: str = ""
+    current_state: str = "UNCLEAR"
+    current_origin: str = "UNCLEAR"
+    current_origin_price_zone: str | None = None
+    current_with_parent: bool | None = None
+    summary: str = ""
+
+
+@dataclass(slots=True)
 class StoryState:
     """Framework-level parent/current move context."""
 
@@ -287,14 +304,17 @@ class StoryState:
     parent_timeframe: str = ""
     parent_direction: Direction = Direction.UNCLEAR
     parent_state: MarketState = MarketState.UNCLEAR
-    parent_active: bool = False
+    parent_active: bool | None = None
     current_move_timeframe: str = ""
     current_move_direction: Direction = Direction.UNCLEAR
+    current_move_state: MarketState = MarketState.UNCLEAR
     current_move_origin: str = "UNCLEAR"
-    current_move_with_parent: bool = False
+    current_move_origin_price_zone: str | None = None
+    current_move_with_parent: bool | None = None
     controlling_origin: str = ""
     active_execution_trade: str = ""
     carrying_timeframe: str = ""
+    move_context: MoveContext | None = None
     summary: str = ""
 
 
@@ -352,6 +372,7 @@ class MarketReport:
     multi_level_story: MultiLevelStory | None = None
     story: MultiLevelStory | None = None
     story_state: StoryState | None = None
+    move_context: MoveContext | None = None
     decision: DecisionState | None = None
     framework_audit_trace: object | None = None
     summary: str = ""

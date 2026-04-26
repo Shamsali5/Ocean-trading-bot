@@ -22,6 +22,7 @@ from ocean_engine.models.market import (
     ActiveTradeCandidate,
     DivergenceAudit,
     MarketReport,
+    MoveContext,
     TimeframeData,
     VAccSeries,
 )
@@ -49,6 +50,7 @@ _FRAMEWORK_ACTIONS_REQUIRING_CONTEXT = {
     FinalAction.CLOSE_SHORT,
     FinalAction.CLOSE_AND_FLIP,
 }
+_FRESH_ENTRY_ACTIONS = {FinalAction.BUY, FinalAction.SELL}
 
 
 def build_vacc_map(
@@ -92,18 +94,6 @@ def build_market_report(
         file=__file__,
         function="build_market_report",
     )
-    trace.add_check(
-        name="Lower timeframe not allowed to decide before higher context",
-        passed=parent_context_available,
-        severity="ERROR" if not parent_context_available else "INFO",
-        details=(
-            f"Highest timeframe context available: {highest_tf}"
-            if parent_context_available
-            else "Highest-timeframe parent context missing while lower levels exist."
-        ),
-        file=__file__,
-        function="build_market_report",
-    )
 
     ordered_market_data = {
         tf: market_data[tf]
@@ -128,6 +118,8 @@ def build_market_report(
         range_states={tf: state.range_state for tf, state in structures.items()},
         zones=zones if isinstance(zones, list) else [],
     )
+    move_context = story_state.move_context or MoveContext()
+    _add_move_context_checks(trace, move_context)
     decision = build_decision_state(
         structures=structures,
         divergence_audit=divergence_audit,
@@ -135,10 +127,16 @@ def build_market_report(
         multi_level_story=multi_level_story,
         zones=zones,
         position_mode=config.position_mode,
+        move_context=move_context,
     )
     apply_htf_first_guard(
         decision=decision,
         conditions=(ordered_tfs, highest_tf, htf_start_ok, parent_context_available),
+        trace=trace,
+    )
+    apply_parent_current_separation_guard(
+        decision=decision,
+        move_context=move_context,
         trace=trace,
     )
 
@@ -165,6 +163,7 @@ def build_market_report(
         multi_level_story=multi_level_story,
         story=multi_level_story,
         story_state=story_state,
+        move_context=move_context,
         decision=decision,
         framework_audit_trace=trace,
         summary=summary,
@@ -305,6 +304,108 @@ def apply_htf_first_guard(
         ),
         file=__file__,
         function="apply_htf_first_guard",
+    )
+
+
+def _add_move_context_checks(trace: FrameworkAuditTrace, move_context: MoveContext) -> None:
+    """Record required move-context separation checks on audit trace."""
+
+    parent_identified = bool(move_context.parent_timeframe) and move_context.parent_direction not in {"", "UNCLEAR"}
+    trace.add_check(
+        name="Parent move identified",
+        passed=parent_identified,
+        severity="ERROR" if not parent_identified else "INFO",
+        details=(
+            f"Parent: {move_context.parent_timeframe} {move_context.parent_direction} {move_context.parent_state}"
+            if parent_identified
+            else "Unable to identify parent move context."
+        ),
+        file=__file__,
+        function="_add_move_context_checks",
+    )
+
+    current_identified = bool(move_context.current_timeframe) and move_context.current_direction not in {"", "UNCLEAR"}
+    trace.add_check(
+        name="Current move identified",
+        passed=current_identified,
+        severity="ERROR" if not current_identified else "INFO",
+        details=(
+            f"Current: {move_context.current_timeframe} {move_context.current_direction} {move_context.current_state}"
+            if current_identified
+            else "Unable to identify current move context."
+        ),
+        file=__file__,
+        function="_add_move_context_checks",
+    )
+
+    separated = (
+        parent_identified
+        and current_identified
+        and (
+            move_context.parent_timeframe != move_context.current_timeframe
+            or move_context.parent_direction != move_context.current_direction
+            or move_context.parent_state != move_context.current_state
+        )
+    )
+    trace.add_check(
+        name="Parent/current move separated",
+        passed=separated,
+        severity="ERROR" if not separated else "INFO",
+        details=(
+            "Parent and current moves are independently identified."
+            if separated
+            else "Parent/current move collapsed into same context."
+        ),
+        file=__file__,
+        function="_add_move_context_checks",
+    )
+
+    origin_identified = (
+        current_identified
+        and move_context.current_origin not in {"", "UNCLEAR"}
+    )
+    trace.add_check(
+        name="Current move origin identified",
+        passed=origin_identified,
+        severity="ERROR" if not origin_identified else "INFO",
+        details=(
+            f"Current origin: {move_context.current_origin}"
+            if origin_identified
+            else "Current move origin is unclear."
+        ),
+        file=__file__,
+        function="_add_move_context_checks",
+    )
+
+
+def apply_parent_current_separation_guard(
+    decision: Any,
+    move_context: MoveContext,
+    trace: FrameworkAuditTrace,
+) -> None:
+    """Force WAIT for fresh BUY/SELL when parent/current separation is unclear."""
+
+    separation_unclear = (
+        move_context.current_origin == "UNCLEAR"
+        or move_context.current_timeframe == ""
+        or move_context.parent_timeframe == ""
+    )
+    if not separation_unclear:
+        return
+    if decision.final_action not in _FRESH_ENTRY_ACTIONS:
+        return
+
+    decision.final_action = FinalAction.WAIT
+    decision.action = FinalAction.WAIT
+    decision.reason = "Parent/current move separation unclear; framework v1.2 requires current move origin for fresh entry."
+    decision.management_state = "NONE"
+    trace.add_check(
+        name="Parent/current move separated",
+        passed=False,
+        severity="ERROR",
+        details="Final action downgraded to WAIT because parent/current separation is unclear for fresh entry.",
+        file=__file__,
+        function="apply_parent_current_separation_guard",
     )
 
 
