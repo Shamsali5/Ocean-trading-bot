@@ -41,29 +41,25 @@ def format_final_action(decision: DecisionState) -> str:
 
 
 def format_market_story(report: MarketReport) -> str:
-    """Format compact market story section."""
+    """Format market story as what each timeframe is currently doing."""
 
-    story_state = getattr(report, "story_state", None)
-    parent = _text(getattr(story_state, "parent_timeframe", "N/A"))
-    parent_direction = _format_enum_value(getattr(story_state, "parent_direction", "N/A"))
-    parent_state = _format_enum_value(getattr(story_state, "parent_state", "N/A"))
-    current_tf = _text(getattr(story_state, "current_move_timeframe", "N/A"))
-    current_direction = _format_enum_value(getattr(story_state, "current_move_direction", "N/A"))
-    current_origin = _text(getattr(story_state, "current_move_origin", "N/A"))
-    with_parent = getattr(story_state, "current_move_with_parent", None)
-    if with_parent is True:
-        alignment = "WITH_PARENT"
-    elif with_parent is False:
-        alignment = "AGAINST_PARENT"
+    structures = getattr(report, "structures", None) or getattr(report, "structure", None) or {}
+    story_parts: list[str] = []
+    for tf in TIMEFRAME_ORDER:
+        structure = structures.get(tf)
+        if structure is None:
+            continue
+        direction = _format_enum_value(getattr(structure, "direction", "UNCLEAR"))
+        market_state = _format_enum_value(getattr(structure, "market_state", "UNCLEAR"))
+        story_parts.append(f"{_normalize_tf(tf)} {direction} {market_state}")
+
+    if not story_parts:
+        story_line = "Timeframe Story: N/A"
     else:
-        alignment = "UNCLEAR"
+        story_line = "Timeframe Story: " + " | ".join(story_parts)
+
     counter_move = _format_counter_move(report)
-    return (
-        f"Parent Move: {parent} {parent_direction} {parent_state}\n"
-        f"Current Move: {current_tf} {current_direction} ({current_origin})\n"
-        f"Current vs Parent: {alignment}\n"
-        f"{counter_move}"
-    )
+    return f"{story_line}\n{counter_move}"
 
 
 def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
@@ -129,7 +125,7 @@ def format_carry_status(report: MarketReport) -> str:
 
 
 def format_range_status(structures: dict[str, Any] | None) -> str:
-    """Format range/location summary, including multi-timeframe active ranges."""
+    """Format range/location with upper and lower boundaries only."""
 
     if not structures:
         return "N/A"
@@ -149,29 +145,13 @@ def format_range_status(structures: dict[str, Any] | None) -> str:
 
     active_rows = [(tf, state) for tf, state in range_rows if bool(getattr(state, "active", False))]
     rows = active_rows if active_rows else range_rows[:1]
-    lines: list[str] = [f"Active Ranges: {len(active_rows)}"]
-    if len(active_rows) >= 2:
-        active_tfs = ",".join(_normalize_tf(tf) for tf, _ in active_rows)
-        lines.append(f"Multi-timeframe ranges: {active_tfs}")
-
+    lines: list[str] = []
     for tf, range_state in rows:
-        active = "YES" if getattr(range_state, "active", False) else "NO"
-        location = _text(getattr(range_state, "price_location", "N/A"))
-        status = _text(getattr(range_state, "status", "N/A"))
-        ownership = _format_enum_value(getattr(range_state, "ownership", "N/A"))
         lower = getattr(range_state, "lower_edge", None)
         upper = getattr(range_state, "upper_edge", None)
         upper_text = f"{upper:.2f}" if isinstance(upper, (int, float)) else "N/A"
         lower_text = f"{lower:.2f}" if isinstance(lower, (int, float)) else "N/A"
-        band = (
-            f"{lower:.2f}-{upper:.2f}"
-            if isinstance(lower, (int, float)) and isinstance(upper, (int, float))
-            else "N/A"
-        )
-        lines.append(
-            f"{_normalize_tf(tf)} | Active: {active} | Status: {status} | Location: {location} | "
-            f"Ownership: {ownership} | Upper: {upper_text} | Lower: {lower_text} | Band: {band}"
-        )
+        lines.append(f"{_normalize_tf(tf)} | Upper: {upper_text} | Lower: {lower_text}")
     return "\n".join(lines)
 
 
