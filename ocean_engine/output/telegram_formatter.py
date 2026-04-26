@@ -568,27 +568,123 @@ def _format_counter_move(report: MarketReport) -> str:
             ranges.append((range_tf, range_state))
     zones = _flatten_zones(report)
 
+    parent_range_tf = ""
     if target_text == "BULLISH":
         from_range = _price_in_range_bottom(price, ranges)
         zone_support = _zone_supports_counter(price, zones, bullish=True)
         context_bits: list[str] = []
         if from_range:
-            context_bits.append("from range bottom")
+            parent_range_tf = _first_matching_range_tf(price, ranges, bottom=True)
+            range_label = f"{_normalize_tf(parent_range_tf)} range lower boundary" if parent_range_tf else "range lower boundary"
+            context_bits.append(range_label)
         if zone_support:
-            context_bits.append("demand zone")
+            zone_tf = _first_matching_zone_tf(price, zones, bullish=True)
+            zone_label = f"{_normalize_tf(zone_tf)} demand" if zone_tf else "demand zone"
+            context_bits.append(zone_label)
     else:
         from_range = _price_in_range_top(price, ranges)
         zone_support = _zone_supports_counter(price, zones, bullish=False)
         context_bits = []
         if from_range:
-            context_bits.append("from range top")
+            parent_range_tf = _first_matching_range_tf(price, ranges, bottom=False)
+            range_label = f"{_normalize_tf(parent_range_tf)} range upper boundary" if parent_range_tf else "range upper boundary"
+            context_bits.append(range_label)
         if zone_support:
-            context_bits.append("supply zone")
+            zone_tf = _first_matching_zone_tf(price, zones, bullish=False)
+            zone_label = f"{_normalize_tf(zone_tf)} supply" if zone_tf else "supply zone"
+            context_bits.append(zone_label)
 
+    setup_label = _infer_counter_setup_label(
+        active_trade_audit=active_trade_audit,
+        tf=tf,
+        bullish=(target_text == "BULLISH"),
+    )
+    setup_display = _counter_setup_display(setup_label)
+    tactical_label = "tactical" if target_text != _direction_text_from_active(active_direction) else "aligned"
+    direction_text = "Bullish" if target_text == "BULLISH" else "Bearish"
+    base = f"Counter Move: {_normalize_tf(tf)} {direction_text} {setup_display} ({tactical_label})"
     if context_bits:
         context_text = " + ".join(context_bits)
-        return f"Counter Move: {_normalize_tf(tf)} {target_text} divergence {context_text}."
-    return f"Counter Move: {_normalize_tf(tf)} {target_text} divergence."
+        return f"{base} from {context_text}."
+    return f"{base}."
+
+
+def _infer_counter_setup_label(
+    active_trade_audit: ActiveTradeAudit | None,
+    tf: str,
+    bullish: bool,
+) -> str | None:
+    if active_trade_audit is None:
+        return None
+    mapping = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}
+    field = mapping.get(tf)
+    if not field:
+        return None
+    candidate = getattr(active_trade_audit, field, None)
+    if candidate is None or not getattr(candidate, "exists", False):
+        return None
+    direction = _candidate_direction(candidate)
+    if bullish and direction != Direction.UP:
+        return None
+    if (not bullish) and direction != Direction.DOWN:
+        return None
+    setup = _format_enum_value(getattr(candidate, "setup_type", "")).strip()
+    if setup:
+        return setup.title().replace(" ", " ")
+    return None
+
+
+def _counter_setup_display(setup_label: str | None) -> str:
+    if not setup_label:
+        return "Divergence"
+    normalized = setup_label.upper().replace(" ", "_")
+    if normalized == "TYPE_1":
+        return "Type 1"
+    if normalized == "TYPE_2":
+        return "Type 2"
+    if normalized == "TYPE_3":
+        return "Type 3"
+    return setup_label
+
+
+def _direction_text_from_active(direction: Direction) -> str:
+    if direction == Direction.UP:
+        return "BULLISH"
+    if direction == Direction.DOWN:
+        return "BEARISH"
+    return "UNCLEAR"
+
+
+def _first_matching_range_tf(price: float | None, ranges: list[tuple[str, Any]], *, bottom: bool) -> str:
+    if price is None:
+        return ""
+    for tf, state in ranges:
+        if not getattr(state, "active", False):
+            continue
+        lower = getattr(state, "lower_edge", None)
+        upper = getattr(state, "upper_edge", None)
+        if not isinstance(lower, (int, float)) or not isinstance(upper, (int, float)):
+            continue
+        width = max(upper - lower, 1e-9)
+        threshold = lower + (0.25 * width) if bottom else upper - (0.25 * width)
+        if bottom and lower <= price <= threshold:
+            return tf
+        if (not bottom) and threshold <= price <= upper:
+            return tf
+    return ""
+
+
+def _first_matching_zone_tf(price: float | None, zones: list[SupplyDemandZone], *, bullish: bool) -> str:
+    zone_type_text = "DEMAND" if bullish else "SUPPLY"
+    for zone in zones:
+        if _format_enum_value(getattr(zone, "zone_type", "")).upper() != zone_type_text:
+            continue
+        band = _parse_band(getattr(zone, "price_band", ""))
+        if band is None:
+            continue
+        if price is None or (band[0] <= price <= band[1]):
+            return str(getattr(zone, "timeframe", "") or "")
+    return ""
 
 
 def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:

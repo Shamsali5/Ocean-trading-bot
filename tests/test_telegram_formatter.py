@@ -384,7 +384,10 @@ def test_market_story_mentions_lower_tf_counter_move_at_range_bottom_with_demand
         )
     ]
     text = format_compact_telegram_report(report)
-    assert "Counter Move: 5m BULLISH divergence from range bottom + demand zone." in text
+    assert (
+        "Counter Move: 5m Bullish Divergence (tactical) from 4H range lower boundary + 1H demand."
+        in text
+    )
 
 
 def test_failed_breakout_appears() -> None:
