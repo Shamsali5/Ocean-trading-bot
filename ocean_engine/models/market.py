@@ -275,6 +275,13 @@ class DecisionState:
     reason: str = ""
     guard_reasons: list[str] = field(default_factory=list)
     valid: bool = True
+    active_trade_label: str = ""
+    controlling_origin: str = ""
+    active_execution_trade: str = ""
+    carrying_timeframe: str = ""
+    fresh_entry_valid: bool = False
+    existing_hold_valid: bool = False
+    too_late_to_chase: bool = False
     action: FinalAction = FinalAction.WAIT
     confidence: float = 0.0
     rationale: str = ""
