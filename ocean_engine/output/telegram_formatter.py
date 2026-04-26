@@ -154,7 +154,8 @@ def format_multi_level_story(story: MultiLevelStory | None) -> str:
     confirmed = getattr(story, "confirmed_timeframes", [])
     confirmed_text = ",".join(_normalize_tf(tf) for tf in confirmed) if confirmed else "N/A"
     direction = _format_enum_value(getattr(story, "direction", "N/A"))
-    return f"{active} {direction} [{confirmed_text}]"
+    status = _text(getattr(story, "higher_tf_status", "N/A"))
+    return f"{active} {direction} [{confirmed_text}] ({status})"
 
 
 def format_position_management(decision: DecisionState | None) -> str:
