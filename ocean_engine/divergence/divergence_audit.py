@@ -49,6 +49,7 @@ def audit_timeframe_divergence(timeframe: str, structure: StructureState, vacc: 
         abc=latest,
         candles=structure.candles,
         vacc_series=vacc,
+        trace=trace,
     )
     c_end = latest.segment_c.end_index if latest.segment_c is not None else latest.c_index
     state.notes = f"{state.notes}; C ending at leg index {c_end}".strip("; ").strip()
@@ -95,6 +96,7 @@ def audit_timeframe_divergence_with_validator(
         candles=structure.candles,
         vacc_series=vacc,
         abc_validation=validation,
+        trace=trace,
     )
     c_end = latest.segment_c.end_index if latest.segment_c is not None else latest.c_index
     state.notes = f"{state.notes}; C ending at leg index {c_end}; abc_reason={validation.reason}".strip("; ").strip()

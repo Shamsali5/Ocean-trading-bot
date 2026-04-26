@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ocean_engine.divergence.divergence_engine import (
     compare_segment_energy,
+    compare_vacc_energy_a_vs_c,
     detect_divergence_from_abc,
     detect_opposite_impulse,
     grade_divergence,
@@ -290,5 +291,148 @@ def test_compare_segment_energy_zero_axis_reset_counts_as_weakening() -> None:
     vacc = _vacc_with_values(velocity, acceleration)
 
     result = compare_segment_energy(abc, vacc)
-    assert result["zero_axis_reset"] is True
-    assert result["weakening_count"] >= 1
+    assert result["zero_axis_reset"] is False
+    assert result["weakening_count"] == 0
+
+
+def test_compare_vacc_energy_a_vs_c_requires_valid_abc_first() -> None:
+    abc_result = type(
+        "ABCResult",
+        (),
+        {
+            "timeframe": "1h",
+            "direction": "BEARISH",
+            "valid": False,
+            "segment_a": None,
+            "segment_b": None,
+            "segment_c": None,
+        },
+    )()
+    vacc = _vacc_with_values([0.0] * 20, [0.0] * 20)
+    result = compare_vacc_energy_a_vs_c([], abc_result, vacc)
+    assert result.valid_energy_weakening is False
+    assert "A-B-C invalid" in result.reason
+
+
+def test_compare_vacc_energy_a_vs_c_needs_two_core_weakenings() -> None:
+    abc_result = type(
+        "ABCResult",
+        (),
+        {
+            "timeframe": "1h",
+            "direction": "BEARISH",
+            "valid": True,
+            "segment_a": type("Seg", (), {"start_index": 2, "end_index": 6})(),
+            "segment_b": type("Seg", (), {"start_index": 7, "end_index": 9})(),
+            "segment_c": type("Seg", (), {"start_index": 10, "end_index": 14})(),
+        },
+    )()
+    velocity = [0.0] * 25
+    acceleration = [0.0] * 25
+    for idx in range(2, 7):
+        velocity[idx] = 2.0
+        acceleration[idx] = 0.4
+    for idx in range(10, 15):
+        velocity[idx] = 1.0
+        acceleration[idx] = 0.15
+    velocity[7] = 0.6
+    velocity[8] = 0.7
+    velocity[9] = 0.6
+    vacc = _vacc_with_values(velocity, acceleration)
+    result = compare_vacc_energy_a_vs_c([], abc_result, vacc)
+    assert result.vel_weaker is True
+    assert result.acc_weaker is True
+    assert result.valid_energy_weakening is True
+
+
+def test_compare_vacc_energy_single_component_is_not_valid_weakening() -> None:
+    abc_result = type(
+        "ABCResult",
+        (),
+        {
+            "timeframe": "1h",
+            "direction": "BEARISH",
+            "valid": True,
+            "segment_a": type("Seg", (), {"start_index": 2, "end_index": 6})(),
+            "segment_b": type("Seg", (), {"start_index": 7, "end_index": 9})(),
+            "segment_c": type("Seg", (), {"start_index": 10, "end_index": 14})(),
+        },
+    )()
+    velocity = [0.0] * 25
+    acceleration = [0.0] * 25
+    for idx in range(2, 7):
+        velocity[idx] = 2.0
+        acceleration[idx] = 0.4
+    for idx in range(10, 15):
+        velocity[idx] = 1.5
+        acceleration[idx] = 0.42
+    velocity[7] = 0.8
+    velocity[8] = 0.7
+    velocity[9] = 0.75
+    vacc = _vacc_with_values(velocity, acceleration)
+    result = compare_vacc_energy_a_vs_c([], abc_result, vacc)
+    assert result.vel_weaker is True
+    assert result.acc_weaker is False
+    assert result.acc_area_weaker is False
+    assert result.valid_energy_weakening is False
+
+
+def test_detect_divergence_requires_valid_energy_weakening_even_with_impulse() -> None:
+    a = _leg(2, 6, Direction.UP, low=90.0, high=110.0)
+    b = _leg(7, 9, Direction.DOWN, low=98.0, high=109.0)
+    c = _leg(10, 14, Direction.UP, low=97.0, high=111.0)
+    abc = _abc(DivergenceDirection.BEARISH, a, b, c)
+
+    velocity = [0.0] * 25
+    acceleration = [0.0] * 25
+    for idx in range(2, 7):
+        velocity[idx] = 2.0
+        acceleration[idx] = 0.4
+    for idx in range(10, 15):
+        velocity[idx] = 1.8
+        acceleration[idx] = 0.4
+    velocity[7] = 0.9
+    velocity[8] = 0.8
+    velocity[9] = 0.85
+    vacc = _vacc_with_values(velocity, acceleration)
+
+    candles = _make_flat_candles(length=25, close=100.0)
+    candles[15] = _candle(106.0, 107.0, 99.0, 99.4, 15)
+    candles[14] = _candle(105.5, 106.5, 104.0, 106.0, 14)
+
+    state = detect_divergence_from_abc(abc, candles, vacc)
+    assert state.impulse_confirmed is True
+    assert state.exists is False
+
+
+def test_compare_vacc_energy_single_component_is_not_valid_weakening() -> None:
+    abc_result = type(
+        "ABCResult",
+        (),
+        {
+            "timeframe": "1h",
+            "direction": "BEARISH",
+            "valid": True,
+            "segment_a": type("Seg", (), {"start_index": 2, "end_index": 6})(),
+            "segment_b": type("Seg", (), {"start_index": 7, "end_index": 9})(),
+            "segment_c": type("Seg", (), {"start_index": 10, "end_index": 14})(),
+        },
+    )()
+    velocity = [0.0] * 25
+    acceleration = [0.0] * 25
+    for idx in range(2, 7):
+        velocity[idx] = 2.0
+        acceleration[idx] = 0.25
+    for idx in range(10, 15):
+        velocity[idx] = 1.0
+        acceleration[idx] = 0.25
+    # Keep B above zero: no reset, and acceleration-area equal.
+    velocity[7] = 0.4
+    velocity[8] = 0.5
+    velocity[9] = 0.4
+    vacc = _vacc_with_values(velocity, acceleration)
+    result = compare_vacc_energy_a_vs_c([], abc_result, vacc)
+    assert result.vel_weaker is True
+    assert result.acc_weaker is False
+    assert result.acc_area_weaker is False
+    assert result.valid_energy_weakening is False

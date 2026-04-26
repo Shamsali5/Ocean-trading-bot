@@ -205,3 +205,16 @@ def test_strict_abc_validator_rejects_official_when_b_reset_fails(monkeypatch) -
     assert result.exists is False
     assert result.abc_valid is False
     assert "Strict ABC validator failed" in result.notes
+
+
+def test_vacc_only_cross_without_abc_does_not_produce_official_divergence(monkeypatch) -> None:
+    structure = _structure("1h")
+    vacc = _vacc("1h")
+
+    monkeypatch.setattr("ocean_engine.divergence.divergence_audit.find_abc_candidates", lambda *_: [])
+    monkeypatch.setattr("ocean_engine.divergence.divergence_audit.select_latest_abc_candidate", lambda *_: None)
+
+    result = audit_timeframe_divergence_with_validator("1h", structure, vacc)
+    assert result.exists is False
+    assert result.abc_valid is False
+    assert result.direction == DivergenceDirection.NONE

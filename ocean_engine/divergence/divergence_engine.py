@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
-from ocean_abc_validator import ABCValidationResult
+from ocean_abc_validator import ABCSegment, ABCValidationResult
 from ocean_engine.energy.vacc_engine import (
     get_segment_acceleration_area,
     get_segment_velocity_energy,
@@ -14,70 +16,345 @@ from ocean_engine.models.enums import Direction, DivergenceDirection, Divergence
 from ocean_engine.models.market import ABCStructure, Candle, DivergenceState, VAccSeries
 
 
+@dataclass(slots=True)
+class VAccComparisonResult:
+    timeframe: str
+    direction: str
+    vel_weaker: bool
+    acc_weaker: bool
+    acc_area_weaker: bool
+    b_zero_reset: bool
+    weakening_count: int
+    valid_energy_weakening: bool
+    reason: str
+
+
 def compare_segment_energy(abc: ABCStructure, vacc_series: VAccSeries) -> dict[str, bool | int]:
     """Compare A vs C segment energy and count weakening signals."""
 
-    if not abc.abc_valid or abc.segment_a is None or abc.segment_b is None or abc.segment_c is None:
+    abc_validation = _abc_validation_from_abc(abc, vacc_series=vacc_series)
+    comparison = compare_vacc_energy_a_vs_c(
+        candles=[],
+        abc_result=abc_validation,
+        vacc_series=vacc_series,
+    )
+    if not comparison.valid_energy_weakening:
         return {
             "velocity_weaker": False,
+            "acceleration_weaker": False,
             "acceleration_area_weaker": False,
             "zero_axis_reset": False,
             "weakening_count": 0,
         }
+    return {
+        "velocity_weaker": comparison.vel_weaker,
+        "acceleration_weaker": comparison.acc_weaker,
+        "acceleration_area_weaker": comparison.acc_area_weaker,
+        "zero_axis_reset": comparison.b_zero_reset,
+        "weakening_count": comparison.weakening_count,
+    }
 
-    if abc.direction == DivergenceDirection.BEARISH:
+
+def compare_vacc_energy_a_vs_c(
+    candles,
+    abc_result,
+    vacc_series,
+    trace=None,
+) -> VAccComparisonResult:
+    """Compare Segment-A vs Segment-C directional VAcc after A-B-C validation."""
+
+    timeframe = str(getattr(abc_result, "timeframe", "") or "")
+    direction = str(getattr(abc_result, "direction", "") or "").upper()
+    abc_valid = bool(getattr(abc_result, "valid", False))
+    if not abc_valid:
+        result = VAccComparisonResult(
+            timeframe=timeframe,
+            direction=direction or "UNKNOWN",
+            vel_weaker=False,
+            acc_weaker=False,
+            acc_area_weaker=False,
+            b_zero_reset=False,
+            weakening_count=0,
+            valid_energy_weakening=False,
+            reason="A-B-C invalid; skipping VAcc comparison.",
+        )
+        _emit_vacc_checks(trace=trace, result=result, compared_after_abc=False)
+        return result
+
+    segment_a = getattr(abc_result, "segment_a", None)
+    segment_b = getattr(abc_result, "segment_b", None)
+    segment_c = getattr(abc_result, "segment_c", None)
+    if segment_a is None or segment_b is None or segment_c is None:
+        result = VAccComparisonResult(
+            timeframe=timeframe,
+            direction=direction or "UNKNOWN",
+            vel_weaker=False,
+            acc_weaker=False,
+            acc_area_weaker=False,
+            b_zero_reset=False,
+            weakening_count=0,
+            valid_energy_weakening=False,
+            reason="A/B/C segments missing for VAcc comparison.",
+        )
+        _emit_vacc_checks(trace=trace, result=result, compared_after_abc=False)
+        return result
+
+    if direction == "BEARISH":
         energy_direction = Direction.UP
-    elif abc.direction == DivergenceDirection.BULLISH:
+    elif direction == "BULLISH":
         energy_direction = Direction.DOWN
     else:
-        return {
-            "velocity_weaker": False,
-            "acceleration_area_weaker": False,
-            "zero_axis_reset": False,
-            "weakening_count": 0,
-        }
+        result = VAccComparisonResult(
+            timeframe=timeframe,
+            direction=direction or "UNKNOWN",
+            vel_weaker=False,
+            acc_weaker=False,
+            acc_area_weaker=False,
+            b_zero_reset=False,
+            weakening_count=0,
+            valid_energy_weakening=False,
+            reason=f"Unsupported divergence direction '{direction}'.",
+        )
+        _emit_vacc_checks(trace=trace, result=result, compared_after_abc=False)
+        return result
 
     a_velocity = get_segment_velocity_energy(
         vacc_series=vacc_series,
-        start_index=abc.segment_a.start_index,
-        end_index=abc.segment_a.end_index,
+        start_index=segment_a.start_index,
+        end_index=segment_a.end_index,
         direction=energy_direction,
     )
     c_velocity = get_segment_velocity_energy(
         vacc_series=vacc_series,
-        start_index=abc.segment_c.start_index,
-        end_index=abc.segment_c.end_index,
+        start_index=segment_c.start_index,
+        end_index=segment_c.end_index,
         direction=energy_direction,
     )
-    velocity_weaker = c_velocity < a_velocity
+    vel_weaker = c_velocity < a_velocity
+
+    a_acc_peak = _directional_acc_peak(
+        vacc_series=vacc_series,
+        start_index=segment_a.start_index,
+        end_index=segment_a.end_index,
+        direction=energy_direction,
+    )
+    c_acc_peak = _directional_acc_peak(
+        vacc_series=vacc_series,
+        start_index=segment_c.start_index,
+        end_index=segment_c.end_index,
+        direction=energy_direction,
+    )
+    acc_weaker = c_acc_peak < a_acc_peak
 
     a_acc_area = get_segment_acceleration_area(
         vacc_series=vacc_series,
-        start_index=abc.segment_a.start_index,
-        end_index=abc.segment_a.end_index,
+        start_index=segment_a.start_index,
+        end_index=segment_a.end_index,
         direction=energy_direction,
     )
     c_acc_area = get_segment_acceleration_area(
         vacc_series=vacc_series,
-        start_index=abc.segment_c.start_index,
-        end_index=abc.segment_c.end_index,
+        start_index=segment_c.start_index,
+        end_index=segment_c.end_index,
         direction=energy_direction,
     )
-    acceleration_area_weaker = c_acc_area < a_acc_area
+    acc_area_weaker = c_acc_area < a_acc_area
 
-    zero_axis_reset = has_zero_axis_reset(
+    b_zero_reset = has_zero_axis_reset(
         vacc_series=vacc_series,
-        start_index=abc.segment_b.start_index,
-        end_index=abc.segment_b.end_index,
+        start_index=segment_b.start_index,
+        end_index=segment_b.end_index,
         tolerance=0.0,
     )
 
-    weakening_count = sum((velocity_weaker, acceleration_area_weaker, zero_axis_reset))
+    core_weakening = sum((vel_weaker, acc_weaker, acc_area_weaker))
+    valid_energy_weakening = core_weakening >= 2
+    weakening_count = core_weakening + (1 if b_zero_reset else 0)
+    if valid_energy_weakening and b_zero_reset:
+        reason = "A-vs-C energy weakened (>=2) and Segment-B zero reset confirmed."
+    elif valid_energy_weakening:
+        reason = "A-vs-C energy weakened (>=2) without Segment-B zero reset."
+    else:
+        reason = "Insufficient A-vs-C weakening; need >=2 of vel/acc/acc-area."
+
+    result = VAccComparisonResult(
+        timeframe=timeframe,
+        direction=direction,
+        vel_weaker=vel_weaker,
+        acc_weaker=acc_weaker,
+        acc_area_weaker=acc_area_weaker,
+        b_zero_reset=b_zero_reset,
+        weakening_count=weakening_count,
+        valid_energy_weakening=valid_energy_weakening,
+        reason=reason,
+    )
+    _emit_vacc_checks(trace=trace, result=result, compared_after_abc=True)
+    return result
+
+
+def _abc_validation_from_abc(abc: ABCStructure, vacc_series: VAccSeries) -> ABCValidationResult:
+    """Create an ABCValidationResult adapter from ABCStructure for energy comparison."""
+
+    direction_text = (
+        "BEARISH"
+        if abc.direction == DivergenceDirection.BEARISH
+        else "BULLISH"
+        if abc.direction == DivergenceDirection.BULLISH
+        else "UNKNOWN"
+    )
+    segment_a = _segment_from_leg(abc.segment_a, vacc_series=vacc_series)
+    segment_b = _segment_from_leg(abc.segment_b, vacc_series=vacc_series)
+    segment_c = _segment_from_leg(abc.segment_c, vacc_series=vacc_series)
+    return ABCValidationResult(
+        timeframe=abc.timeframe,
+        direction=direction_text,
+        valid=bool(abc.abc_valid and segment_a and segment_b and segment_c),
+        segment_a=segment_a,
+        segment_b=segment_b,
+        segment_c=segment_c,
+        b_reset_valid=bool(abc.b_reset_valid),
+        c_test_valid=bool(abc.c_retest_valid),
+        same_timeframe_valid=True,
+        reason=abc.summary or "ABC structure adapted for VAcc comparison.",
+    )
+
+
+def _segment_from_leg(leg: Any, vacc_series: VAccSeries) -> ABCSegment | None:
+    if leg is None:
+        return None
+    start_index = int(getattr(leg, "start_index", -1))
+    end_index = int(getattr(leg, "end_index", -1))
+    if start_index < 0 or end_index < start_index:
+        return None
+    direction = _leg_direction(leg)
+    start_price = float(getattr(leg, "start_price", 0.0) or 0.0)
+    end_price = float(getattr(leg, "end_price", 0.0) or 0.0)
+    high = float(getattr(leg, "high", 0.0) or 0.0)
+    low = float(getattr(leg, "low", 0.0) or 0.0)
+    if direction not in {"UP", "DOWN"}:
+        direction = "UP" if end_price >= start_price else "DOWN"
+    energy_direction = Direction.UP if direction == "UP" else Direction.DOWN
+    vel_area = get_segment_velocity_energy(
+        vacc_series=vacc_series,
+        start_index=start_index,
+        end_index=end_index,
+        direction=energy_direction,
+    )
+    acc_area = get_segment_acceleration_area(
+        vacc_series=vacc_series,
+        start_index=start_index,
+        end_index=end_index,
+        direction=energy_direction,
+    )
+    return ABCSegment(
+        start_index=start_index,
+        end_index=end_index,
+        start_price=start_price,
+        end_price=end_price,
+        direction=direction,
+        high=high,
+        low=low,
+        vacc_vel_area=float(vel_area),
+        vacc_acc_area=float(acc_area),
+        vacc_total_area=float(abs(vel_area) + abs(acc_area)),
+    )
+
+
+def _directional_acc_peak(
+    *,
+    vacc_series: VAccSeries,
+    start_index: int,
+    end_index: int,
+    direction: Direction,
+) -> float:
+    points = vacc_series.points
+    if start_index < 0 or end_index < start_index or end_index >= len(points):
+        return 0.0
+    segment = points[start_index : end_index + 1]
+    if direction == Direction.UP:
+        candidates = [float(point.acceleration) for point in segment if float(point.acceleration) > 0.0]
+    else:
+        candidates = [abs(float(point.acceleration)) for point in segment if float(point.acceleration) < 0.0]
+    if not candidates:
+        return 0.0
+    return max(candidates)
+
+
+def _leg_direction(leg: Any) -> str:
+    raw = getattr(getattr(leg, "direction", ""), "value", getattr(leg, "direction", ""))
+    text = str(raw).strip().upper()
+    if text in {"UP", "DOWN"}:
+        return text
+    if text == "BULLISH":
+        return "UP"
+    if text == "BEARISH":
+        return "DOWN"
+    return text
+
+
+def _emit_vacc_checks(trace: Any, result: VAccComparisonResult, compared_after_abc: bool) -> None:
+    _add_check(
+        trace,
+        name="VAcc compared only after A-B-C",
+        passed=compared_after_abc,
+        details=result.reason,
+    )
+    _add_check(
+        trace,
+        name="Vel A-vs-C weakening checked",
+        passed=result.vel_weaker,
+        details=result.reason,
+    )
+    _add_check(
+        trace,
+        name="Acc A-vs-C weakening checked",
+        passed=result.acc_weaker,
+        details=result.reason,
+    )
+    _add_check(
+        trace,
+        name="Acc-area A-vs-C weakening checked",
+        passed=result.acc_area_weaker,
+        details=result.reason,
+    )
+    _add_check(
+        trace,
+        name="Segment B zero reset checked",
+        passed=result.b_zero_reset,
+        details=result.reason,
+    )
+
+
+def _add_check(trace: Any, *, name: str, passed: bool, details: str) -> None:
+    if trace is None or not hasattr(trace, "add_check"):
+        return
+    trace.add_check(
+        name=name,
+        passed=bool(passed),
+        severity="INFO" if passed else "ERROR",
+        details=details,
+        file="ocean_engine/divergence/divergence_engine.py",
+        function="compare_vacc_energy_a_vs_c",
+    )
+
+
+def _legacy_energy_dict(result: VAccComparisonResult) -> dict[str, bool | int]:
+    """Return dict-compatible energy payload for older call sites/tests."""
+
+    if not result.valid_energy_weakening:
+        return {
+            "velocity_weaker": False,
+            "acceleration_weaker": False,
+            "acceleration_area_weaker": False,
+            "zero_axis_reset": False,
+            "weakening_count": 0,
+        }
     return {
-        "velocity_weaker": velocity_weaker,
-        "acceleration_area_weaker": acceleration_area_weaker,
-        "zero_axis_reset": zero_axis_reset,
-        "weakening_count": weakening_count,
+        "velocity_weaker": result.vel_weaker,
+        "acceleration_weaker": result.acc_weaker,
+        "acceleration_area_weaker": result.acc_area_weaker,
+        "zero_axis_reset": result.b_zero_reset,
+        "weakening_count": result.weakening_count,
     }
 
 
@@ -213,6 +490,7 @@ def detect_divergence_from_abc(
     candles: list[Candle],
     vacc_series: VAccSeries,
     abc_validation: ABCValidationResult | None = None,
+    trace: Any | None = None,
 ) -> DivergenceState:
     """Convert an A-B-C candidate into official divergence state."""
 
@@ -235,15 +513,22 @@ def detect_divergence_from_abc(
             notes=f"A-B-C validator rejected candidate: {abc_validation.reason}",
         )
 
-    energy = compare_segment_energy(abc=abc, vacc_series=vacc_series)
-    weakening_count = int(energy["weakening_count"])
+    if abc_validation is None:
+        abc_validation = _abc_validation_from_abc(abc, vacc_series=vacc_series)
+    energy = compare_vacc_energy_a_vs_c(
+        candles=candles,
+        abc_result=abc_validation,
+        vacc_series=vacc_series,
+        trace=trace,
+    )
+    weakening_count = energy.weakening_count
     impulse_confirmed, impulse_price, impulse_time = detect_opposite_impulse_details(candles=candles, abc=abc)
     grade = grade_divergence(
         abc_valid=abc.abc_valid,
         weakening_count=weakening_count,
         impulse_confirmed=impulse_confirmed,
     )
-    exists = bool(abc.abc_valid and weakening_count >= 1 and impulse_confirmed)
+    exists = bool(abc.abc_valid and energy.valid_energy_weakening and impulse_confirmed)
 
     zone_text = ""
     divergence_price: float | None = None
@@ -265,6 +550,10 @@ def detect_divergence_from_abc(
         grade=grade,
         weakening_count=weakening_count,
         impulse_confirmed=impulse_confirmed,
+        velocity_weaker=energy.vel_weaker,
+        acceleration_weaker=energy.acc_weaker,
+        acceleration_area_weaker=energy.acc_area_weaker,
+        zero_axis_reset=energy.b_zero_reset,
         price_zone=zone_text,
         divergence_price=divergence_price,
         divergence_time_utc=divergence_time_utc,
@@ -272,8 +561,9 @@ def detect_divergence_from_abc(
         impulse_time_utc=_close_time_to_utc(impulse_time),
         notes=(
             f"abc_valid={abc.abc_valid}, weakening={weakening_count}, "
-            f"impulse={impulse_confirmed}, velocity_weaker={energy['velocity_weaker']}, "
-            f"acc_area_weaker={energy['acceleration_area_weaker']}, zero_reset={energy['zero_axis_reset']}"
+            f"impulse={impulse_confirmed}, vel_weaker={energy.vel_weaker}, "
+            f"acc_weaker={energy.acc_weaker}, acc_area_weaker={energy.acc_area_weaker}, "
+            f"b_zero_reset={energy.b_zero_reset}, valid_energy_weakening={energy.valid_energy_weakening}"
         ),
     )
 
