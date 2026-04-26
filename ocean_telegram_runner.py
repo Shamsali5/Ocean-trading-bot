@@ -5,10 +5,9 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import requests
-from openai import OpenAI
 
 from ocean_framework import FrameworkEngine
 
@@ -20,12 +19,9 @@ from ocean_framework import FrameworkEngine
 # =========================
 # USER CONFIG
 # =========================
-MODEL = os.getenv("OCEAN_OPENAI_MODEL", "gpt-5.4")
-REASONING_EFFORT = os.getenv("OCEAN_REASONING_EFFORT", "high")
-ANALYSIS_MODE = os.getenv("OCEAN_ANALYSIS_MODE", "local").lower().strip()
-
 SYMBOLS = [s.strip().upper() for s in os.getenv("OCEAN_SYMBOLS", "BTCUSDT").split(",") if s.strip()]
 INTERVALS = ["3m", "5m", "15m", "1h", "4h"]
+POSITION_SIDE = os.getenv("OCEAN_POSITION_SIDE", "NONE").upper().strip()
 
 # Telegram output mode: compact is recommended for live alerts.
 TELEGRAM_MODE = os.getenv("OCEAN_TELEGRAM_MODE", "compact").lower().strip()
@@ -45,16 +41,6 @@ LIMITS = {
     "4h": int(os.getenv("OCEAN_LIMIT_4H", "240")),
 }
 
-# Prompt payload size sent to OpenAI.
-PROMPT_KEEP_LAST_N = {
-    "3m": int(os.getenv("OCEAN_PROMPT_3M", str(LIMITS["3m"]))),
-    "5m": int(os.getenv("OCEAN_PROMPT_5M", str(LIMITS["5m"]))),
-    "15m": int(os.getenv("OCEAN_PROMPT_15M", str(LIMITS["15m"]))),
-    "1h": int(os.getenv("OCEAN_PROMPT_1H", str(LIMITS["1h"]))),
-    "4h": int(os.getenv("OCEAN_PROMPT_4H", str(LIMITS["4h"]))),
-}
-
-FRAMEWORK_FILE = Path(os.getenv("OCEAN_FRAMEWORK_FILE", "framework_runtime.txt"))
 DATA_DIR = Path(os.getenv("OCEAN_DATA_DIR", "ohlcv_data"))
 RESULTS_DIR = Path(os.getenv("OCEAN_RESULTS_DIR", "analysis_results"))
 BINANCE_FUTURES_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
@@ -66,18 +52,14 @@ SEND_TELEGRAM = os.getenv("OCEAN_SEND_TELEGRAM", "1") == "1"
 # =========================
 # ENV VARS
 # =========================
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-if ANALYSIS_MODE == "openai" and not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set.")
 if SEND_TELEGRAM and not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
 if SEND_TELEGRAM and not TELEGRAM_CHAT_ID:
     raise RuntimeError("TELEGRAM_CHAT_ID is not set.")
 
-client = OpenAI(api_key=OPENAI_API_KEY) if ANALYSIS_MODE == "openai" else None
 framework_engine = FrameworkEngine()
 
 
@@ -128,19 +110,6 @@ def fetch_all_symbol_data(symbol: str) -> dict[str, list[list[Any]]]:
     return payload
 
 
-def build_prompt_payload(raw_market_data: dict[str, list[list[Any]]]) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for tf, data in raw_market_data.items():
-        keep_n = PROMPT_KEEP_LAST_N.get(tf, len(data))
-        trimmed = trim_klines(data, keep_n)
-        payload[tf] = {
-            "rows": trimmed,
-            "first_open_time_utc": ms_to_utc(trimmed[0][0]) if trimmed else "N/A",
-            "last_close_time_utc": ms_to_utc(trimmed[-1][6]) if trimmed else "N/A",
-        }
-    return payload
-
-
 def derive_current_price(raw_market_data: dict[str, list[list[Any]]]) -> float | None:
     for tf in ("3m", "5m", "15m", "1h", "4h"):
         data = raw_market_data.get(tf, [])
@@ -165,18 +134,6 @@ def text(value: Any, default: str = "N/A") -> str:
         return default
     out = str(value).strip()
     return out if out else default
-
-
-def load_framework() -> str:
-    if not FRAMEWORK_FILE.exists():
-        raise FileNotFoundError(
-            f"Missing runtime framework file: {FRAMEWORK_FILE}\n"
-            f"Create {FRAMEWORK_FILE.name} first and paste Ocean × Natural Chanlun Framework v1.2 into it."
-        )
-    content = FRAMEWORK_FILE.read_text(encoding="utf-8").strip()
-    if not content:
-        raise RuntimeError(f"Framework file is empty: {FRAMEWORK_FILE}")
-    return content
 
 
 # =========================
@@ -636,83 +593,6 @@ def analysis_schema() -> dict[str, Any]:
             "current_move_summary",
         ],
     }
-
-
-# =========================
-# PROMPT
-# =========================
-def build_prompt(symbol: str, framework: str, market_data: dict[str, Any], ts_utc: str, current_price: float | None) -> str:
-    return f"""
-RUNTIME CONSTITUTION:
-{framework}
-
-MARKET INPUT:
-symbol: {symbol}
-analysis_timestamp_utc: {ts_utc}
-current_price: {format_price(current_price)}
-input_type: OHLCV
-available_timeframes: {', '.join(INTERVALS)}
-
-OHLCV DATA:
-{json.dumps(market_data, ensure_ascii=False)}
-
-MANDATORY TASK:
-Return JSON only using the provided schema.
-
-You must read the market using Ocean × Natural Chanlun Framework v1.2.
-Use this exact reading order:
-Structure -> Level -> A-B-C -> VAcc Energy -> Divergence -> Supply/Demand Zone -> Impulse/Acceptance -> Carry -> Multi-Level Context -> Action.
-
-Hard rules:
-- Use only the supplied OHLCV and runtime constitution.
-- Ignore all previous chats, prior analyses, memories, and assumptions.
-- Never predict. Only state what structure has proven.
-- Start from highest timeframe: 4H -> 1H -> 15m -> 5m -> 3m.
-- 4H is parent context unless the supplied data clearly proves otherwise.
-- 1H is the main decision/range layer unless the supplied data clearly proves otherwise.
-- 15m is active decomposition/execution structure.
-- 5m is carry / execution timing.
-- 3m is micro confirmation only.
-- Level is structural, not only timeframe. Do not call a timeframe official unless that same timeframe has its own structure.
-- DIVERGENCE TIMEFRAME LOCK: First fill divergence_audit for tf_4h, tf_1h, tf_15m, tf_5m, tf_3m independently.
-- Each divergence_audit row must judge only that timeframe's own OHLCV. Do not use 5m A-B-C to declare 15m divergence. Do not use 15m A-B-C to declare 1H divergence.
-- A timeframe row may set exists=YES only if that same timeframe has valid A-B-C, Segment B reset, Segment C retest/new extreme, energy weakness, and opposite impulse.
-- selected_last_meaningful_tf must be one of the audited timeframe keys only, and it must point to an exists=YES row. If no audited row is official, selected_last_meaningful_tf=none.
-- last_meaningful_divergence must be copied from the selected divergence_audit row. Never relabel or promote it to another timeframe.
-- ACTIVE TRADE TIMEFRAME LOCK: First fill active_trade_audit for tf_4h, tf_1h, tf_15m, tf_5m, tf_3m independently.
-- Each active_trade_audit row must judge only that timeframe's own setup origin. Do not use 15m Type 1 to declare 1H Type 1. Do not use 5m carry to declare 5m Type 1 unless 5m itself has its own legal setup.
-- selected_active_trade_tf must identify the TRUE ORIGIN timeframe of the current active meaningful trade, not the timeframe currently carrying it and not the higher timeframe containing it.
-- If 15m divergence/rejection created the trade and 5m is carrying it, selected_active_trade_tf=tf_15m and carry.timeframe=5m.
-- If 1H structure only contains the move but did not itself form same-timeframe A-B-C + impulse or Type 3 acceptance, the active trade must not be labeled 1H.
-- trade_classification must be copied from selected_active_trade_tf only. Never relabel or promote the same trade to another timeframe.
-- current_move.timeframe must equal the selected active trade origin timeframe when active_trade_audit selected_active_trade_tf is not none. carry.timeframe must remain the lower carrying timeframe.
-- MULTI-LEVEL SAME-STORY RULE: If two or more timeframes independently show same-direction official setups, do not treat it as drift; label multi_level_story.active=YES.
-- Multi-level confirmation is valid only if each listed timeframe independently has its own same-timeframe A-B-C, energy weakening, and impulse.
-- If only the lower timeframe is official and the higher timeframe only looks weak, set higher_tf_status=WEAKENING_CONTEXT_ONLY and do not promote the higher timeframe to official.
-- Always separate: controlling_origin = highest official timeframe still structurally active; active_execution_trade = most recent legal executable setup currently being managed; carrying_timeframe = lower timeframe managing the active execution trade.
-- Example: if 1H and 15m are both official bearish, output controlling_origin=1H Bearish Type 1, active_execution_trade=15m Bearish Type 1 if 15m gave the latest executable entry, carrying_timeframe=5m DOWN.
-- Example: if only 15m is official and 1H only contains/weakens, output multi_level_story.active=NO or higher_tf_status=WEAKENING_CONTEXT_ONLY; active trade remains 15m, not 1H.
-- Divergence requires same-timeframe A-B-C: A first directional move, B real reset/pullback/range, C second same-direction test.
-- No A-B-C on that exact timeframe = no official divergence on that timeframe.
-- Segment B should ideally reset Vel near zero. If not, downgrade divergence.
-- Segment C must retest or break the prior extreme and show weaker energy than A.
-- VAcc confirmation can be Vel, Acc, Acc-area, Multi, Structural-only, or None.
-- Divergence without impulse is warning only, not a confirmed trade.
-- Supply/demand zones are location references only. They cannot create BUY/SELL/CLOSE/FLIP by themselves.
-- A zone becomes tradable only if structure confirms there through divergence/restart/rejection/reclaim/breakout plus impulse/acceptance and carry.
-- If 1H or higher range is active and price is in MID, fresh BUY/SELL must be WAIT.
-- A valid fresh BUY/SELL requires Type 1, Type 2, or Type 3 logic and Fresh/Active carry.
-- If carry is already EXHAUSTING, do not output fresh BUY/SELL.
-- HOLD is different from fresh entry. No fresh entry does not mean close.
-- CLOSE requires opposite divergence + opposite impulse on the carrying timeframe.
-- CLOSE AND FLIP requires close conditions plus new opposite authority and structural room.
-- If any critical layer is unclear, final_action must be WAIT.
-
-OHLCV rows are Binance futures klines:
-[open_time, open, high, low, close, volume, close_time, quote_asset_volume,
- number_of_trades, taker_buy_base_volume, taker_buy_quote_volume, ignore]
-open_time and close_time are milliseconds since Unix epoch.
-""".strip()
 
 
 # =========================
@@ -1233,8 +1113,13 @@ def normalize_analysis(result: dict[str, Any], symbol: str, ts_utc: str, current
             pm["if_not_in"] = "WAIT"
             result["one_line_reason"] = "WAIT because Type 1 requires official same-timeframe A-B-C divergence plus confirmed impulse."
 
-    # Hard guard E: HOLD requires a locked active trade origin.
-    if result.get("final_action") in {"HOLD LONG", "HOLD SHORT"} and text(tc.get("active_trade_exists")).upper() != "YES":
+    # Hard guard E: HOLD requires a locked active trade origin unless managing an existing position.
+    position_side = text(result.get("position_side"), "NONE").upper()
+    if (
+        result.get("final_action") in {"HOLD LONG", "HOLD SHORT"}
+        and text(tc.get("active_trade_exists")).upper() != "YES"
+        and position_side not in {"LONG", "SHORT"}
+    ):
         result["final_action"] = "WAIT"
         result["management_state"] = "NONE"
         pm["if_already_in"] = "NONE"
@@ -1249,46 +1134,6 @@ def normalize_analysis(result: dict[str, Any], symbol: str, ts_utc: str, current
         ml_story["explanation"] = "Multi-level story downgraded because fewer than two same-direction official timeframe audits were confirmed."
 
     return result
-
-
-# =========================
-# OPENAI ANALYSIS
-# =========================
-def analyze_symbol(symbol: str, framework: str, market_data: dict[str, Any]) -> dict[str, Any]:
-    ts_utc = utc_now_iso()
-    current_price = derive_current_price(market_data)
-    prompt_payload = build_prompt_payload(market_data)
-    prompt = build_prompt(symbol, framework, prompt_payload, ts_utc, current_price)
-
-    response = client.responses.create(
-        model=MODEL,
-        reasoning={"effort": REASONING_EFFORT},
-        instructions=(
-            "You are the OCEAN × Natural Chanlun AI market-reading engine. "
-            "Use only the supplied OHLCV and runtime constitution. Ignore previous chats. "
-            "Never predict. Read structure first, energy second, zone third, signal last. "
-            "Apply strict divergence timeframe ownership: fill divergence_audit independently for each timeframe, "
-            "and make last_meaningful_divergence a copy of selected_last_meaningful_tf only. "
-            "Apply strict active-trade timeframe ownership: fill active_trade_audit independently, "
-            "select the true origin timeframe, and make trade_classification/current_move follow that selected origin. "
-            "Never promote 15m divergence/trade into 1H or 5m carry into a 5m origin trade. "
-            "If two timeframes independently confirm the same directional story, fill multi_level_story and separate controlling origin, active execution trade, and carrying timeframe. "
-            "If the higher timeframe only contains lower-timeframe structure, mark it as weakening context only, not official. "
-            "Return only valid JSON matching the schema."
-        ),
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "ocean_chanlun_telegram_v1_4",
-                "strict": True,
-                "schema": analysis_schema(),
-            }
-        },
-        input=prompt,
-    )
-
-    parsed = json.loads(response.output_text)
-    return normalize_analysis(parsed, symbol, ts_utc, current_price)
 
 
 def save_analysis(symbol: str, result: dict[str, Any]) -> Path:
@@ -1551,25 +1396,19 @@ def seconds_until_next_half_hour() -> int:
 # RUNNER
 # =========================
 def run_once() -> None:
-    framework = load_framework() if ANALYSIS_MODE == "openai" else ""
-
     for symbol in SYMBOLS:
         print(f"[{utc_now_iso()}] Fetching data for {symbol}...")
         raw_market_data = fetch_all_symbol_data(symbol)
         ts_utc = utc_now_iso()
         current_price = derive_current_price(raw_market_data)
 
-        if ANALYSIS_MODE == "openai":
-            print(f"[{utc_now_iso()}] Sending {symbol} to OpenAI...")
-            result = analyze_symbol(symbol, framework, raw_market_data)
-        else:
-            print(f"[{utc_now_iso()}] Running local framework engine for {symbol}...")
-            result = normalize_analysis(
-                framework_engine.analyze(symbol, raw_market_data, ts_utc),
-                symbol,
-                ts_utc,
-                current_price,
-            )
+        print(f"[{utc_now_iso()}] Running local Ocean × Chanlun engine for {symbol}...")
+        result = normalize_analysis(
+            framework_engine.analyze(symbol, raw_market_data, ts_utc, POSITION_SIDE),
+            symbol,
+            ts_utc,
+            current_price,
+        )
 
         output_file = save_analysis(symbol, result)
         print(f"[{utc_now_iso()}] Saved analysis: {output_file}")
@@ -1584,7 +1423,8 @@ def run_once() -> None:
 def main() -> None:
     print("OCEAN × Natural Chanlun Telegram runner v1.5 started.")
     print(f"Symbols: {', '.join(SYMBOLS)}")
-    print(f"Analysis mode: {ANALYSIS_MODE}")
+    print("Analysis mode: local deterministic engine")
+    print(f"Position side: {POSITION_SIDE}")
     print(f"Telegram mode: {TELEGRAM_MODE}")
     print(f"Send Telegram: {'YES' if SEND_TELEGRAM else 'NO'}")
     print("Press Ctrl+C to stop.\n")
