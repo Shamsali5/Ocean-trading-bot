@@ -19,6 +19,9 @@ def _official_divergence(timeframe: str, direction: DivergenceDirection) -> Dive
         abc_valid=True,
         direction=direction,
         grade=DivergenceGrade.STRONG,
+        weakening_count=2,
+        velocity_weaker=True,
+        acceleration_weaker=True,
         impulse_confirmed=True,
     )
 
@@ -64,7 +67,12 @@ def test_official_1h_plus_15m_bearish_is_active() -> None:
         tf_1h=_official_divergence("1h", DivergenceDirection.BEARISH),
         tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
     )
-    story = build_multi_level_story(divergence_audit, ActiveTradeAudit())
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BEARISH, carry_tf="15m"),
+        tf_15m=_official_trade("15m", DivergenceDirection.BEARISH, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(divergence_audit, active_trade_audit)
     assert story.active is True
     assert story.direction == Direction.DOWN
 
@@ -74,7 +82,12 @@ def test_official_1h_plus_15m_bullish_is_active() -> None:
         tf_1h=_official_divergence("1h", DivergenceDirection.BULLISH),
         tf_15m=_official_divergence("15m", DivergenceDirection.BULLISH),
     )
-    story = build_multi_level_story(divergence_audit, ActiveTradeAudit())
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BULLISH, carry_tf="15m"),
+        tf_15m=_official_trade("15m", DivergenceDirection.BULLISH, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(divergence_audit, active_trade_audit)
     assert story.active is True
     assert story.direction == Direction.UP
 
@@ -92,7 +105,12 @@ def test_controlling_origin_chooses_higher_timeframe() -> None:
         tf_1h=_official_divergence("1h", DivergenceDirection.BEARISH),
         tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
     )
-    story = build_multi_level_story(divergence_audit, ActiveTradeAudit())
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BEARISH, carry_tf="15m"),
+        tf_15m=_official_trade("15m", DivergenceDirection.BEARISH, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(divergence_audit, active_trade_audit)
     assert "1H" in story.controlling_origin.upper()
 
 
@@ -102,6 +120,7 @@ def test_active_execution_trade_uses_selected_active_trade_if_same_direction() -
         tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
     )
     active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BEARISH, carry_tf="15m"),
         tf_15m=_official_trade("15m", DivergenceDirection.BEARISH, carry_tf="5m"),
         selected_active_trade_tf="15m",
     )
@@ -237,6 +256,7 @@ def test_carry_timeframe_comes_from_active_execution_trade() -> None:
         tf_15m=_official_divergence("15m", DivergenceDirection.BULLISH),
     )
     active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BULLISH, carry_tf="15m"),
         tf_15m=_official_trade("15m", DivergenceDirection.BULLISH, carry_tf="5m"),
         selected_active_trade_tf="15m",
     )
@@ -256,6 +276,7 @@ def test_summary_includes_confirmed_control_execution_and_carry() -> None:
         tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH),
     )
     active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_trade("1h", DivergenceDirection.BEARISH, carry_tf="15m"),
         tf_15m=_official_trade("15m", DivergenceDirection.BEARISH, carry_tf="5m"),
         selected_active_trade_tf="15m",
     )

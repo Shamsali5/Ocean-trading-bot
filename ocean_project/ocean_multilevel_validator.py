@@ -76,7 +76,11 @@ def validate_multi_level_same_story(
         row["type_valid"] and row["origin_timeframe"] not in {"", row["timeframe"]}
         for row in timeframe_rows.values()
     )
-    controlling_origin_separated = controlling_origin is not None and (controlling_tf in confirmed_timeframes if controlling_tf else True)
+    controlling_origin_separated = (
+        True
+        if not confirmed_timeframes
+        else bool(controlling_origin is not None and (controlling_tf in confirmed_timeframes if controlling_tf else True))
+    )
     execution_trade_separated = (
         active_execution_trade is not None and (execution_tf in confirmed_timeframes if execution_tf else True)
     ) if confirmed_timeframes else True
@@ -207,6 +211,7 @@ def _audit_timeframe(
     origin_timeframe = str(_value(type_row, "origin_timeframe", fallback=("timeframe",)) or "")
 
     has_same_tf_abc = bool(_bool(divergence_row, "abc_valid"))
+    divergence_direction = _normalize_direction(_value(divergence_row, "direction"))
     has_energy_weakening = _has_energy_weakening(divergence_row)
     has_opposite_impulse = bool(
         _bool(divergence_row, "impulse_confirmed")
@@ -235,6 +240,7 @@ def _audit_timeframe(
                 and has_same_tf_abc
                 and has_energy_weakening
                 and has_opposite_impulse
+                and divergence_direction == direction
             )
             or (
                 type_label == "TYPE_2"
@@ -363,7 +369,10 @@ def _has_energy_weakening(row: Any) -> bool:
         _bool(row, "acceleration_weaker", fallback=("acc_divergence",)),
         _bool(row, "acceleration_area_weaker", fallback=("acc_area_divergence",)),
     ]
-    return sum(bool(flag) for flag in flags) >= 2
+    if sum(bool(flag) for flag in flags) >= 2:
+        return True
+    # Legacy divergence rows may already be gated upstream without explicit weakening fields.
+    return bool(_bool(row, "exists"))
 
 
 def _display_tf(timeframe: str) -> str:
