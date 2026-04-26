@@ -133,6 +133,7 @@ def test_bearish_official_divergence_with_weaker_energy_and_impulse() -> None:
 
     candles = _make_flat_candles(length=25, close=100.0)
     candles[15] = _candle(106.0, 107.0, 99.0, 99.5, 15)
+    candles[16] = _candle(99.5, 100.0, 98.5, 98.9, 16)
     candles[14] = _candle(105.5, 106.5, 104.0, 106.0, 14)
 
     state = detect_divergence_from_abc(abc, candles, vacc)
@@ -163,6 +164,7 @@ def test_bullish_official_divergence_with_weaker_energy_and_impulse() -> None:
 
     candles = _make_flat_candles(length=25, close=100.0)
     candles[15] = _candle(94.0, 101.0, 93.0, 100.5, 15)
+    candles[16] = _candle(100.5, 102.0, 100.1, 101.3, 16)
     candles[14] = _candle(95.0, 96.0, 93.8, 94.2, 14)
 
     state = detect_divergence_from_abc(abc, candles, vacc)
@@ -460,6 +462,7 @@ def test_detect_divergence_requires_valid_energy_weakening_even_with_impulse() -
 
     candles = _make_flat_candles(length=25, close=100.0)
     candles[15] = _candle(106.0, 107.0, 99.0, 99.4, 15)
+    candles[16] = _candle(99.4, 100.1, 98.8, 99.0, 16)
     candles[14] = _candle(105.5, 106.5, 104.0, 106.0, 14)
 
     state = detect_divergence_from_abc(abc, candles, vacc)

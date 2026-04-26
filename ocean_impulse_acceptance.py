@@ -89,6 +89,7 @@ def validate_impulse_after_divergence(
         )
         return result
 
+    local_pivots = _normalize_local_pivots(local_pivots, candles, direction_text)
     start_index = _resolve_start_index(local_pivots, len(candles))
     candidate_index: int | None = None
     structure_broken: str | None = None
@@ -400,6 +401,34 @@ def _extract_pivot(local_pivots: Any, keys: tuple[str, ...]) -> float | None:
     return None
 
 
+def _normalize_local_pivots(local_pivots: Any, candles: list[Any], direction: str) -> dict[str, float | int]:
+    payload: dict[str, float | int] = {}
+    if isinstance(local_pivots, dict):
+        payload.update(local_pivots)
+    elif local_pivots is not None:
+        for key in ("start_index", "minor_high", "minor_low", "reference_high", "reference_low"):
+            value = getattr(local_pivots, key, None)
+            if value is not None:
+                payload[key] = value
+
+    start_index_raw = payload.get("start_index", max(1, len(candles) - 8))
+    try:
+        start_index = int(start_index_raw)
+    except (TypeError, ValueError):
+        start_index = max(1, len(candles) - 8)
+    start_index = min(max(start_index, 1), max(1, len(candles) - 1))
+    history = candles[max(0, start_index - 6) : start_index]
+    if history:
+        if direction == "BEARISH":
+            history_low = min(float(getattr(item, "low", 0.0)) for item in history)
+            payload["minor_low"] = max(float(payload.get("minor_low", history_low)), history_low)
+        elif direction == "BULLISH":
+            history_high = max(float(getattr(item, "high", 0.0)) for item in history)
+            payload["minor_high"] = min(float(payload.get("minor_high", history_high)), history_high)
+    payload["start_index"] = start_index
+    return payload
+
+
 def _interrupts_opposite_rhythm(candles: list[Any], index: int, direction: str) -> bool:
     history = candles[max(0, index - 3) : index]
     if len(history) < 2:
@@ -427,11 +456,11 @@ def _follow_through_confirmed(candles: list[Any], index: int, direction: str) ->
 def _immediately_erased(candles: list[Any], index: int, direction: str) -> bool:
     if index + 1 >= len(candles):
         return False
-    trigger_open = float(getattr(candles[index], "open", 0.0))
-    next_window = candles[index + 1 : min(len(candles), index + 3)]
+    trigger_close = float(getattr(candles[index], "close", 0.0))
+    next_window = candles[index + 1 : min(len(candles), index + 2)]
     if direction == "BULLISH":
-        return any(float(getattr(item, "close", 0.0)) < trigger_open for item in next_window)
-    return any(float(getattr(item, "close", 0.0)) > trigger_open for item in next_window)
+        return any(float(getattr(item, "close", 0.0)) < trigger_close for item in next_window)
+    return any(float(getattr(item, "close", 0.0)) > trigger_close for item in next_window)
 
 
 def _first_boundary_break_index(closes: list[float], boundary: float, direction: str) -> int | None:
