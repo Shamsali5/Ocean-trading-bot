@@ -10,6 +10,8 @@ from typing import Any, Literal
 import requests
 from openai import OpenAI
 
+from ocean_framework import FrameworkEngine
+
 # ============================================================
 # OCEAN × NATURAL CHANLUN TELEGRAM RUNNER v1.4
 # Structure -> A-B-C -> VAcc Energy -> Divergence -> Zone -> Impulse -> Carry -> Multi-Level Context -> Action
@@ -20,6 +22,7 @@ from openai import OpenAI
 # =========================
 MODEL = os.getenv("OCEAN_OPENAI_MODEL", "gpt-5.4")
 REASONING_EFFORT = os.getenv("OCEAN_REASONING_EFFORT", "high")
+ANALYSIS_MODE = os.getenv("OCEAN_ANALYSIS_MODE", "local").lower().strip()
 
 SYMBOLS = [s.strip().upper() for s in os.getenv("OCEAN_SYMBOLS", "BTCUSDT").split(",") if s.strip()]
 INTERVALS = ["3m", "5m", "15m", "1h", "4h"]
@@ -58,6 +61,7 @@ BINANCE_FUTURES_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
 TELEGRAM_CHUNK_SIZE = int(os.getenv("OCEAN_TELEGRAM_CHUNK_SIZE", "3500"))
 REQUEST_TIMEOUT = int(os.getenv("OCEAN_REQUEST_TIMEOUT", "30"))
 RUN_EVERY_HALF_HOUR = os.getenv("OCEAN_RUN_EVERY_HALF_HOUR", "1") == "1"
+SEND_TELEGRAM = os.getenv("OCEAN_SEND_TELEGRAM", "1") == "1"
 
 # =========================
 # ENV VARS
@@ -66,14 +70,15 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-if not OPENAI_API_KEY:
+if ANALYSIS_MODE == "openai" and not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set.")
-if not TELEGRAM_BOT_TOKEN:
+if SEND_TELEGRAM and not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
-if not TELEGRAM_CHAT_ID:
+if SEND_TELEGRAM and not TELEGRAM_CHAT_ID:
     raise RuntimeError("TELEGRAM_CHAT_ID is not set.")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY) if ANALYSIS_MODE == "openai" else None
+framework_engine = FrameworkEngine()
 
 
 # =========================
@@ -1546,27 +1551,42 @@ def seconds_until_next_half_hour() -> int:
 # RUNNER
 # =========================
 def run_once() -> None:
-    framework = load_framework()
+    framework = load_framework() if ANALYSIS_MODE == "openai" else ""
 
     for symbol in SYMBOLS:
         print(f"[{utc_now_iso()}] Fetching data for {symbol}...")
         raw_market_data = fetch_all_symbol_data(symbol)
+        ts_utc = utc_now_iso()
+        current_price = derive_current_price(raw_market_data)
 
-        print(f"[{utc_now_iso()}] Sending {symbol} to OpenAI...")
-        result = analyze_symbol(symbol, framework, raw_market_data)
+        if ANALYSIS_MODE == "openai":
+            print(f"[{utc_now_iso()}] Sending {symbol} to OpenAI...")
+            result = analyze_symbol(symbol, framework, raw_market_data)
+        else:
+            print(f"[{utc_now_iso()}] Running local framework engine for {symbol}...")
+            result = normalize_analysis(
+                framework_engine.analyze(symbol, raw_market_data, ts_utc),
+                symbol,
+                ts_utc,
+                current_price,
+            )
 
         output_file = save_analysis(symbol, result)
         print(f"[{utc_now_iso()}] Saved analysis: {output_file}")
 
         message = format_telegram_message(result)
-        send_telegram_message(message)
-        print(f"[{utc_now_iso()}] Telegram sent for {symbol}.")
+        print(message)
+        if SEND_TELEGRAM:
+            send_telegram_message(message)
+            print(f"[{utc_now_iso()}] Telegram sent for {symbol}.")
 
 
 def main() -> None:
-    print("OCEAN × Natural Chanlun Telegram runner v1.4 started.")
+    print("OCEAN × Natural Chanlun Telegram runner v1.5 started.")
     print(f"Symbols: {', '.join(SYMBOLS)}")
+    print(f"Analysis mode: {ANALYSIS_MODE}")
     print(f"Telegram mode: {TELEGRAM_MODE}")
+    print(f"Send Telegram: {'YES' if SEND_TELEGRAM else 'NO'}")
     print("Press Ctrl+C to stop.\n")
 
     if not RUN_EVERY_HALF_HOUR:
