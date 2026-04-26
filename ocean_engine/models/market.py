@@ -162,12 +162,15 @@ class DivergenceState:
 
 @dataclass(slots=True)
 class DivergenceAudit:
-    """Audit trail for divergence validation and lock transitions."""
+    """Per-timeframe divergence audit summary and selection record."""
 
-    timeframe: str
-    passed: bool
-    reason: str
-    metadata: dict[str, str] = field(default_factory=dict)
+    tf_4h: DivergenceState = field(default_factory=lambda: DivergenceState(timeframe="4h"))
+    tf_1h: DivergenceState = field(default_factory=lambda: DivergenceState(timeframe="1h"))
+    tf_15m: DivergenceState = field(default_factory=lambda: DivergenceState(timeframe="15m"))
+    tf_5m: DivergenceState = field(default_factory=lambda: DivergenceState(timeframe="5m"))
+    tf_3m: DivergenceState = field(default_factory=lambda: DivergenceState(timeframe="3m"))
+    selected_last_meaningful_tf: str | None = None
+    selection_reason: str = ""
 
 
 @dataclass(slots=True)
