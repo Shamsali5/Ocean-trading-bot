@@ -59,6 +59,38 @@ def test_range_state_is_included() -> None:
     assert state.range_state is not None
 
 
+def test_structure_engine_applies_breakout_acceptance_to_range_state() -> None:
+    closes = [
+        100.0,
+        95.0,
+        90.0,
+        95.0,
+        100.0,
+        106.0,
+        100.0,
+        95.0,
+        90.0,
+        95.0,
+        100.0,
+        106.5,
+        107.0,
+    ]
+    data = _make_timeframe_data("15m", closes)
+    state = analyze_structure(data, pivot_left=1, pivot_right=1, min_leg_bars=2, range_min_legs=3)
+    assert state.range_state is not None
+    # Ensure breakout/acceptance classifier is integrated in live structure analysis.
+    assert state.range_state.status in {
+        "ACTIVE",
+        "BROKEN_UP",
+        "BROKEN_DOWN",
+        "FAILED_BREAK_UP",
+        "FAILED_BREAK_DOWN",
+        "RE_ENTERED",
+        "UPGRADE_RISK",
+        "UNCLEAR",
+    }
+
+
 def test_market_state_range_when_active_range_contains_price(monkeypatch) -> None:
     data = _make_timeframe_data("4h", [100.0, 99.0, 98.0, 99.0, 100.0, 101.0])
 

@@ -29,6 +29,20 @@ def normalize_tf_label(tf: str) -> str:
     return tf
 
 
+def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:
+    value = getattr(candidate.direction, "value", candidate.direction)
+    if value in (Direction.UP, Direction.DOWN):
+        return value
+    text = str(value).upper()
+    if text == "BULLISH":
+        return Direction.UP
+    if text == "BEARISH":
+        return Direction.DOWN
+    if candidate.carry_direction in {Direction.UP, Direction.DOWN}:
+        return candidate.carry_direction
+    return Direction.UNCLEAR
+
+
 def get_official_timeframes_by_direction(
     divergence_audit: DivergenceAudit,
     active_trade_audit: ActiveTradeAudit,
@@ -64,13 +78,14 @@ def get_official_timeframes_by_direction(
             )
 
         trade_row = getattr(active_trade_audit, TIMEFRAME_FIELD_MAP[tf])
+        normalized_direction = _candidate_direction(trade_row)
         if (
             trade_row.exists
             and trade_row.setup_type == SetupType.TYPE_3
             and trade_row.origin_timeframe == tf
-            and trade_row.direction in (Direction.UP, Direction.DOWN)
+            and normalized_direction in (Direction.UP, Direction.DOWN)
         ):
-            direction_key = "BULLISH" if trade_row.direction == Direction.UP else "BEARISH"
+            direction_key = "BULLISH" if normalized_direction == Direction.UP else "BEARISH"
             grouped[direction_key].append(
                 {
                     "timeframe": tf,
@@ -217,9 +232,9 @@ def _choose_execution_row(
     if selected_trade is not None:
         selected_trade_direction = (
             "BULLISH"
-            if selected_trade.direction == Direction.UP
+            if _candidate_direction(selected_trade) == Direction.UP
             else "BEARISH"
-            if selected_trade.direction == Direction.DOWN
+            if _candidate_direction(selected_trade) == Direction.DOWN
             else ""
         )
         if (
@@ -239,9 +254,9 @@ def _choose_execution_row(
     if selected_trade is not None:
         selected_trade_direction = (
             "BULLISH"
-            if selected_trade.direction == Direction.UP
+            if _candidate_direction(selected_trade) == Direction.UP
             else "BEARISH"
-            if selected_trade.direction == Direction.DOWN
+            if _candidate_direction(selected_trade) == Direction.DOWN
             else ""
         )
         if (

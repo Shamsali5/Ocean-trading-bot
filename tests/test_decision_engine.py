@@ -421,3 +421,54 @@ def test_range_ownership_does_not_create_buy_sell_by_itself() -> None:
     )
     assert decision.final_action == FinalAction.WAIT
     assert "No locked active trade origin exists." in decision.reason
+
+
+def test_type3_divergence_direction_is_normalized_to_buy_sell() -> None:
+    candidate = ActiveTradeCandidate(
+        timeframe="15m",
+        exists=True,
+        origin_timeframe="15m",
+        direction=DivergenceDirection.BULLISH,
+        setup_type=SetupType.TYPE_3,
+        type_label="15m Bullish Type 3",
+        carry_timeframe="5m",
+        carry_state=CarryState.FRESH,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        too_late_to_chase=False,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="UNKNOWN")
+    assert decision.final_action == FinalAction.BUY
+
+
+def test_close_and_flip_when_selected_finished_and_opposite_fresh_exists() -> None:
+    selected = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.EXHAUSTING,
+        finished=True,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+    )
+    opposite = _candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+        origin_timeframe="5m",
+        carry_timeframe="3m",
+        type_label="5m Bearish Type 1",
+    )
+    audit = ActiveTradeAudit(
+        tf_15m=selected,
+        tf_5m=opposite,
+        selected_active_trade_tf="15m",
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=DivergenceAudit(),
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+    )
+    assert decision.final_action == FinalAction.CLOSE_AND_FLIP

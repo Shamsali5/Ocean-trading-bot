@@ -9,7 +9,7 @@ from ocean_engine.divergence.divergence_audit import (
     is_official_divergence,
     select_last_meaningful_divergence,
 )
-from ocean_engine.models.enums import FinalAction
+from ocean_engine.models.enums import Direction, FinalAction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     DecisionState,
@@ -184,6 +184,30 @@ def format_active_trade(active_trade_audit: ActiveTradeAudit | None) -> str:
     return f"{selected_text}\nTrade Audit: {active_trade_audit_summary(active_trade_audit)}"
 
 
+def _selected_opposite_candidate(audit: ActiveTradeAudit | None) -> ActiveTradeCandidate | None:
+    """Return opposite-direction fresh candidate when available."""
+
+    selected = _selected_candidate(audit)
+    if selected is None:
+        return None
+    selected_direction = _candidate_direction(selected)
+    if selected_direction not in {Direction.UP, Direction.DOWN}:
+        return None
+    opposite_direction = Direction.DOWN if selected_direction == Direction.UP else Direction.UP
+    for field in ("tf_4h", "tf_1h", "tf_15m", "tf_5m", "tf_3m"):
+        candidate = getattr(audit, field, None)
+        if candidate is None or not getattr(candidate, "exists", False):
+            continue
+        if candidate.origin_timeframe == selected.origin_timeframe:
+            continue
+        if _candidate_direction(candidate) != opposite_direction:
+            continue
+        if not getattr(candidate, "fresh_entry_valid", False):
+            continue
+        return candidate
+    return None
+
+
 def format_multi_level_story(story: MultiLevelStory | None) -> str:
     """Format multi-level story section."""
 
@@ -215,6 +239,25 @@ def format_position_management(decision: DecisionState | None) -> str:
         f"Stop: {_text(getattr(decision, 'reason', 'N/A'))}\n"
         f"Profit: N/A\n"
         f"Runner: N/A"
+    )
+
+
+def format_hierarchy(report: MarketReport) -> str:
+    """Format parent/execution/carry hierarchy section."""
+
+    story_state = getattr(report, "story_state", None)
+    parent_tf = _text(getattr(story_state, "parent_timeframe", "N/A"))
+    parent_direction = _format_enum_value(getattr(story_state, "parent_direction", "N/A"))
+    controlling_origin = _text(getattr(story_state, "controlling_origin", "N/A"))
+    execution = _text(getattr(story_state, "active_execution_trade", "N/A"))
+    carry = _text(getattr(story_state, "carrying_timeframe", "N/A"))
+    current_tf = _text(getattr(story_state, "current_move_timeframe", "N/A"))
+    return (
+        f"Parent Move: {parent_tf} {parent_direction}\n"
+        f"Controlling Origin: {controlling_origin}\n"
+        f"Active Execution Trade: {execution}\n"
+        f"Current Carrying Move: {carry}\n"
+        f"Smallest Active Internal Move: {current_tf}"
     )
 
 
@@ -253,6 +296,24 @@ def format_compact_telegram_report(report: MarketReport) -> str:
         zone_list = zones
 
     decision_block = format_final_action(decision) if decision is not None else "Signal: WAIT\nManagement: NONE\nReason: N/A"
+    active_trade_audit_for_flip = getattr(report, "active_trade_audit", None) or _latest_active_trade_audit(report)
+    selected_candidate = _selected_candidate(active_trade_audit_for_flip)
+    opposite_candidate = _selected_opposite_candidate(active_trade_audit_for_flip)
+    flip_hint = ""
+    final_action_text = (
+        _format_enum_value(getattr(decision, "final_action", ""))
+        if decision is not None
+        else ""
+    )
+    if (
+        selected_candidate is not None
+        and opposite_candidate is not None
+        and final_action_text.upper() == "CLOSE AND FLIP"
+    ):
+        flip_hint = (
+            f"\nFlip To: {_text(getattr(opposite_candidate, 'type_label', 'N/A'))}"
+            f"\nFlip Carry: {_text(getattr(opposite_candidate, 'carry_timeframe', 'N/A'))}"
+        )
     controlling_origin = _text(getattr(story_state, "controlling_origin", "N/A"), default="N/A")
     active_execution = _text(getattr(story_state, "active_execution_trade", "N/A"), default="N/A")
     carry_tf = _text(getattr(story_state, "carrying_timeframe", "N/A"), default="N/A")
@@ -280,7 +341,9 @@ def format_compact_telegram_report(report: MarketReport) -> str:
         f"━━━━━━━━━━━━━━\n"
         f"ACTIVE TRADE\n{format_active_trade(active_trade_audit)}\n\n"
         f"━━━━━━━━━━━━━━\n"
-        f"POSITION MANAGEMENT\n{format_position_management(decision)}\n\n"
+        f"POSITION MANAGEMENT\n{format_position_management(decision)}{flip_hint}\n\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"MARKET HIERARCHY\n{format_hierarchy(report)}\n\n"
         f"━━━━━━━━━━━━━━\n"
         f"NEXT WATCH\n{format_next_watch(report)}\n\n"
         f"━━━━━━━━━━━━━━\n"
@@ -334,6 +397,20 @@ def _selected_candidate(audit: ActiveTradeAudit | None) -> ActiveTradeCandidate 
     if candidate is None or not getattr(candidate, "exists", False):
         return None
     return candidate
+
+
+def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:
+    value = getattr(candidate.direction, "value", candidate.direction)
+    if value in (Direction.UP, Direction.DOWN):
+        return value
+    text = str(value).upper()
+    if text == "BULLISH":
+        return Direction.UP
+    if text == "BEARISH":
+        return Direction.DOWN
+    if candidate.carry_direction in {Direction.UP, Direction.DOWN}:
+        return candidate.carry_direction
+    return Direction.UNCLEAR
 
 
 def _normalize_tf(tf: str) -> str:

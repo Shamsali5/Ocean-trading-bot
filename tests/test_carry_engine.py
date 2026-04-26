@@ -50,10 +50,12 @@ def _divergence_state(
     direction: DivergenceDirection,
     exists: bool = True,
     impulse: bool = False,
+    abc_valid: bool = True,
 ) -> DivergenceState:
     return DivergenceState(
         timeframe=timeframe,
         exists=exists,
+        abc_valid=abc_valid,
         direction=direction,
         impulse_confirmed=impulse,
     )
@@ -102,6 +104,17 @@ def test_opposite_divergence_with_impulse_gives_exhausting_and_finished_true() -
 
 def test_opposite_divergence_without_impulse_does_not_finish_carry() -> None:
     carry_div = _divergence_state("15m", DivergenceDirection.BEARISH, exists=True, impulse=False)
+    assert is_carry_finished(carry_div, Direction.UP) is False
+
+
+def test_opposite_divergence_with_impulse_but_non_official_does_not_finish_carry() -> None:
+    carry_div = _divergence_state(
+        "15m",
+        DivergenceDirection.BEARISH,
+        exists=True,
+        impulse=True,
+        abc_valid=False,
+    )
     assert is_carry_finished(carry_div, Direction.UP) is False
 
 

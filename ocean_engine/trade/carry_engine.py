@@ -76,7 +76,7 @@ def classify_carry_state(
 def is_carry_finished(carry_divergence: DivergenceState | None, carry_direction: Direction) -> bool:
     """Determine whether carry is finished by opposite official impulse."""
 
-    if carry_divergence is None or not carry_divergence.exists or not carry_divergence.impulse_confirmed:
+    if not _is_official_divergence(carry_divergence):
         return False
     if carry_direction == Direction.UP and carry_divergence.direction == DivergenceDirection.BEARISH:
         return True
@@ -143,10 +143,21 @@ def _get_divergence_row(audit: DivergenceAudit, timeframe: str) -> DivergenceSta
 
 
 def _is_opposite_divergence(state: DivergenceState | None, carry_direction: Direction) -> bool:
-    if state is None or not state.exists:
+    if not _is_official_divergence(state):
         return False
     if carry_direction == Direction.UP:
         return state.direction == DivergenceDirection.BEARISH
     if carry_direction == Direction.DOWN:
         return state.direction == DivergenceDirection.BULLISH
     return False
+
+
+def _is_official_divergence(state: DivergenceState | None) -> bool:
+    if state is None:
+        return False
+    return bool(
+        state.exists
+        and state.abc_valid
+        and state.impulse_confirmed
+        and state.direction in (DivergenceDirection.BULLISH, DivergenceDirection.BEARISH)
+    )

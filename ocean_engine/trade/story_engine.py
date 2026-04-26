@@ -133,6 +133,8 @@ def _origin_from_setup(setup_type: SetupType) -> str:
         return "BREAKOUT"
     if setup_type == SetupType.TYPE_1:
         return "DIVERGENCE"
+    if setup_type == SetupType.TYPE_2:
+        return "PULLBACK_RESTART"
     return "UNCLEAR"
 
 

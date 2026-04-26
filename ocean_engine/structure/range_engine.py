@@ -288,7 +288,7 @@ def detect_range_from_legs(
         range_start_index=best_window[0].start_index if best_window else None,
     )
 
-    return RangeState(
+    state = RangeState(
         timeframe=timeframe,
         is_range=True,
         high=outer_upper_edge,
@@ -312,4 +312,19 @@ def detect_range_from_legs(
             f"Ownership={ownership.value}."
         ),
     )
+    state.status = "ACTIVE"
+    if candles:
+        state = detect_breakout_acceptance(
+            range_state=state,
+            candles=candles,
+            legs=ordered,
+            current_price=current_price,
+        )
+        state.summary = (
+            f"Range detected with {len(best_window)} legs, "
+            f"ZD={pivot_low:.6f}, ZG={pivot_high:.6f}. "
+            f"Ownership={ownership.value}. "
+            f"Status={state.status}."
+        )
+    return state
 

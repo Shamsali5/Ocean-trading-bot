@@ -34,7 +34,7 @@ def default_active_trade_candidate(timeframe: str) -> ActiveTradeCandidate:
         timeframe=timeframe,
         exists=False,
         origin_timeframe=timeframe,
-        selection_reason="No valid Type 1 setup.",
+        selection_reason="No valid active setup.",
         summary=f"{timeframe} no active trade candidate",
     )
 
@@ -468,6 +468,151 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
     )
 
 
+def detect_range_rejection_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
+    """Build range-rejection candidate at a valid active range edge."""
+
+    timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
+    structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
+    if not timeframe:
+        return default_active_trade_candidate("")
+    structure = structures.get(timeframe) if isinstance(structures, dict) else None
+    if structure is None or structure.range_state is None or structure.active_leg is None:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Range rejection requires active range and active leg."
+        return candidate
+
+    range_state = structure.range_state
+    if not range_state.active or range_state.status not in {"ACTIVE", "RE_ENTERED"}:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Range rejection requires active/re-entered range context."
+        return candidate
+    if range_state.price_location not in {"UPPER_EDGE", "LOWER_EDGE"}:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Range rejection requires edge location (not midpoint)."
+        return candidate
+
+    if range_state.price_location == "UPPER_EDGE" and structure.active_leg.direction == Direction.DOWN:
+        direction = Direction.DOWN
+        dir_label = "Bearish"
+        carry_direction = Direction.DOWN
+        invalidation = "Upper-edge rejection invalidates on accepted breakout above upper edge."
+        trigger = structure.active_leg.low
+        edge = range_state.upper_edge
+    elif range_state.price_location == "LOWER_EDGE" and structure.active_leg.direction == Direction.UP:
+        direction = Direction.UP
+        dir_label = "Bullish"
+        carry_direction = Direction.UP
+        invalidation = "Lower-edge rejection invalidates on accepted breakdown below lower edge."
+        trigger = structure.active_leg.high
+        edge = range_state.lower_edge
+    else:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "No rejection impulse at range edge."
+        return candidate
+
+    carry_tf, carry_state, carry_finished = _type3_carry_context(
+        timeframe=timeframe,
+        carry_direction=carry_direction,
+        structures=structures if isinstance(structures, dict) else {},
+    )
+    if carry_state == CarryState.UNCLEAR:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Range rejection missing lower-timeframe carry."
+        return candidate
+
+    too_late = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
+    fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
+    existing_hold_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
+    tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
+    origin_band = f"{edge:.2f}-{edge:.2f}" if isinstance(edge, (int, float)) else ""
+    return ActiveTradeCandidate(
+        timeframe=timeframe,
+        exists=True,
+        origin_timeframe=timeframe,
+        direction=direction,
+        setup_type=SetupType.NONE,
+        trade_function=TradeFunction.RANGE_REJECTION,
+        type_label=f"{tf_label} {dir_label} Range Rejection",
+        origin_price_zone=origin_band,
+        confirmation_price=structure.current_price,
+        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        earliest_legal_trigger_price=trigger,
+        carry_timeframe=carry_tf,
+        carry_direction=carry_direction,
+        carry_state=carry_state,
+        fresh_entry_valid=fresh_entry_valid,
+        existing_hold_valid=existing_hold_valid,
+        too_late_to_chase=too_late,
+        invalidation=invalidation,
+        current_status="ACTIVE" if existing_hold_valid else "WATCH",
+        selection_reason="Range rejection confirmed at active edge with carry.",
+        summary=f"{tf_label} range rejection | carry={carry_tf or 'NONE'} {carry_state.value}",
+    )
+
+
+def detect_upgrade_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
+    """Build cautious upgrade candidate when range upgrade risk appears."""
+
+    timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
+    structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
+    if not timeframe:
+        return default_active_trade_candidate("")
+    structure = structures.get(timeframe) if isinstance(structures, dict) else None
+    if structure is None or structure.range_state is None or structure.active_leg is None:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Upgrade requires range and active leg context."
+        return candidate
+    range_state = structure.range_state
+    if range_state.status != "UPGRADE_RISK":
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "No range upgrade risk context."
+        return candidate
+    if structure.active_leg.direction not in {Direction.UP, Direction.DOWN}:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Upgrade direction is unclear."
+        return candidate
+
+    carry_direction = structure.active_leg.direction
+    carry_tf, carry_state, carry_finished = _type3_carry_context(
+        timeframe=timeframe,
+        carry_direction=carry_direction,
+        structures=structures if isinstance(structures, dict) else {},
+    )
+    if carry_state == CarryState.UNCLEAR:
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = "Upgrade requires lower-timeframe carry context."
+        return candidate
+
+    dir_label = "Bullish" if carry_direction == Direction.UP else "Bearish"
+    tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
+    return ActiveTradeCandidate(
+        timeframe=timeframe,
+        exists=True,
+        origin_timeframe=timeframe,
+        direction=carry_direction,
+        setup_type=SetupType.NONE,
+        trade_function=TradeFunction.UPGRADE,
+        type_label=f"{tf_label} {dir_label} Upgrade Attempt",
+        origin_price_zone=f"{range_state.lower_edge:.2f}-{range_state.upper_edge:.2f}"
+        if isinstance(range_state.lower_edge, (int, float)) and isinstance(range_state.upper_edge, (int, float))
+        else "",
+        confirmation_price=structure.current_price,
+        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        earliest_legal_trigger_price=structure.current_price,
+        carry_timeframe=carry_tf,
+        carry_direction=carry_direction,
+        carry_state=carry_state,
+        # Upgrade is tactical in risk context: no fresh chase entry.
+        fresh_entry_valid=False,
+        existing_hold_valid=carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished,
+        too_late_to_chase=carry_state in {CarryState.MATURE, CarryState.EXHAUSTING},
+        invalidation="Upgrade fails if market re-accepts inside prior unstable range balance.",
+        current_status="WATCH",
+        selection_reason="Upgrade-risk context with directional carry continuation.",
+        summary=f"{tf_label} upgrade risk | carry={carry_tf or 'NONE'} {carry_state.value}",
+    )
+
+
 def build_active_trade_audit(
     structures: dict[str, StructureState],
     divergence_audit: DivergenceAudit,
@@ -495,15 +640,27 @@ def build_active_trade_audit(
             divergence=divergence,
             zones=zones,
         )
+        range_rejection_candidate = detect_range_rejection_candidate(
+            timeframe=timeframe,
+            structures=structures,
+        )
         type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures)
+        upgrade_candidate = detect_upgrade_candidate(
+            timeframe=timeframe,
+            structures=structures,
+        )
         if type2_candidate.exists:
             rows[timeframe] = type2_candidate
         elif type1_candidate.exists:
             rows[timeframe] = type1_candidate
         elif zone_reaction_candidate.exists:
             rows[timeframe] = zone_reaction_candidate
-        else:
+        elif range_rejection_candidate.exists:
+            rows[timeframe] = range_rejection_candidate
+        elif type3_candidate.exists:
             rows[timeframe] = type3_candidate
+        else:
+            rows[timeframe] = upgrade_candidate
 
     audit = ActiveTradeAudit(
         tf_4h=rows["4h"],
@@ -565,9 +722,10 @@ def active_trade_audit_summary(audit: ActiveTradeAudit) -> str:
     ):
         if candidate.exists:
             if candidate.setup_type == SetupType.TYPE_3:
-                if candidate.direction == DivergenceDirection.BULLISH:
+                normalized_direction = _candidate_direction(candidate)
+                if normalized_direction == Direction.UP:
                     labels.append(f"{timeframe}:Bullish T3✓")
-                elif candidate.direction == DivergenceDirection.BEARISH:
+                elif normalized_direction == Direction.DOWN:
                     labels.append(f"{timeframe}:Bearish T3✓")
                 else:
                     labels.append(f"{timeframe}:T3✓")
@@ -621,4 +779,18 @@ def _parse_price_band(price_band: str) -> tuple[float | None, float | None]:
     except ValueError:
         return (None, None)
     return (min(lower, upper), max(lower, upper))
+
+
+def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:
+    value = getattr(candidate.direction, "value", candidate.direction)
+    if value in (Direction.UP, Direction.DOWN):
+        return value
+    text = str(value).upper()
+    if text == "BULLISH":
+        return Direction.UP
+    if text == "BEARISH":
+        return Direction.DOWN
+    if candidate.carry_direction in {Direction.UP, Direction.DOWN}:
+        return candidate.carry_direction
+    return Direction.UNCLEAR
 

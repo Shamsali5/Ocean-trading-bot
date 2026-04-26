@@ -282,3 +282,28 @@ def test_failed_breakout_appears() -> None:
     }
     text = format_compact_telegram_report(report)
     assert "Status: FAILED_BREAK_UP" in text
+
+
+def test_formatter_shows_market_hierarchy_section() -> None:
+    text = format_compact_telegram_report(_sample_report())
+    assert "MARKET HIERARCHY" in text
+    assert "Parent Move:" in text
+
+
+def test_formatter_shows_flip_hint_when_close_and_flip_active() -> None:
+    report = _sample_report()
+    report.decision.final_action = FinalAction.CLOSE_AND_FLIP
+    report.active_trade_audit.tf_5m = ActiveTradeCandidate(
+        timeframe="5m",
+        exists=True,
+        origin_timeframe="5m",
+        direction=Direction.DOWN,
+        setup_type=SetupType.TYPE_1,
+        type_label="5m Bearish Type 1",
+        carry_timeframe="3m",
+        carry_state=CarryState.FRESH,
+        fresh_entry_valid=True,
+    )
+    text = format_compact_telegram_report(report)
+    assert "Flip To: 5m Bearish Type 1" in text
+    assert "Flip Carry: 3m" in text

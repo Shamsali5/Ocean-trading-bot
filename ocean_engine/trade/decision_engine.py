@@ -49,6 +49,22 @@ def _normalize_position_mode(position_mode: str) -> str:
     return "UNKNOWN"
 
 
+def _candidate_direction(active_trade: ActiveTradeCandidate) -> Direction:
+    """Normalize candidate direction to canonical UP/DOWN enums."""
+
+    value = getattr(active_trade.direction, "value", active_trade.direction)
+    if value in (Direction.UP, Direction.DOWN):
+        return value
+    text = str(value).upper()
+    if text == "BULLISH":
+        return Direction.UP
+    if text == "BEARISH":
+        return Direction.DOWN
+    if active_trade.carry_direction in {Direction.UP, Direction.DOWN}:
+        return active_trade.carry_direction
+    return Direction.UNCLEAR
+
+
 def initial_decision_from_active_trade(
     active_trade: ActiveTradeCandidate,
     *,
@@ -68,15 +84,16 @@ def initial_decision_from_active_trade(
         decision.reason = "No locked active trade origin exists."
         return decision
 
+    candidate_direction = _candidate_direction(active_trade)
     carry_finished = (
         active_trade.carry_state == CarryState.EXHAUSTING
         and active_trade.existing_hold_valid
         and active_trade.current_status.upper() == "FINISHED"
     )
     if carry_finished:
-        if active_trade.direction == Direction.UP:
+        if candidate_direction == Direction.UP:
             decision.final_action = FinalAction.CLOSE_LONG
-        elif active_trade.direction == Direction.DOWN:
+        elif candidate_direction == Direction.DOWN:
             decision.final_action = FinalAction.CLOSE_SHORT
         else:
             decision.final_action = FinalAction.WAIT
@@ -86,9 +103,9 @@ def initial_decision_from_active_trade(
         return decision
 
     if active_trade.fresh_entry_valid and not active_trade.too_late_to_chase:
-        if active_trade.direction == Direction.UP:
+        if candidate_direction == Direction.UP:
             decision.final_action = FinalAction.BUY
-        elif active_trade.direction == Direction.DOWN:
+        elif candidate_direction == Direction.DOWN:
             decision.final_action = FinalAction.SELL
         else:
             decision.final_action = FinalAction.WAIT
@@ -101,7 +118,7 @@ def initial_decision_from_active_trade(
         if resolved_position_mode == "FLAT":
             decision.final_action = FinalAction.WAIT
             decision.reason = "Valid hold only, not fresh entry; flat position mode waits."
-        elif active_trade.direction == Direction.UP:
+        elif candidate_direction == Direction.UP:
             if resolved_position_mode in {"LONG", "UNKNOWN"}:
                 decision.final_action = FinalAction.HOLD_LONG
                 if resolved_position_mode == "UNKNOWN":
@@ -111,7 +128,7 @@ def initial_decision_from_active_trade(
             else:
                 decision.final_action = FinalAction.WAIT
                 decision.reason = "Position mode does not permit bullish hold."
-        elif active_trade.direction == Direction.DOWN:
+        elif candidate_direction == Direction.DOWN:
             if resolved_position_mode in {"SHORT", "UNKNOWN"}:
                 decision.final_action = FinalAction.HOLD_SHORT
                 if resolved_position_mode == "UNKNOWN":
@@ -129,9 +146,9 @@ def initial_decision_from_active_trade(
         return decision
 
     if active_trade.existing_hold_valid:
-        if active_trade.direction == Direction.UP:
+        if candidate_direction == Direction.UP:
             decision.final_action = FinalAction.HOLD_LONG
-        elif active_trade.direction == Direction.DOWN:
+        elif candidate_direction == Direction.DOWN:
             decision.final_action = FinalAction.HOLD_SHORT
         else:
             decision.final_action = FinalAction.WAIT
@@ -164,6 +181,16 @@ def build_decision_state(
         decision.controlling_origin = multi_level_story.controlling_origin
         decision.active_execution_trade = multi_level_story.active_execution_trade
 
+    selected_direction = _candidate_direction(selected)
+    opposite_selected = _selected_opposite_trade(active_trade_audit, selected_direction)
+    if opposite_selected is not None and _can_close_and_flip(selected, opposite_selected):
+        decision.final_action = FinalAction.CLOSE_AND_FLIP
+        decision.action = FinalAction.CLOSE_AND_FLIP
+        decision.management_state = "CLOSE_AND_FLIP"
+        decision.reason = (
+            "Existing move finished; opposite official setup with carry is active."
+        )
+
     guarded = apply_decision_guards(
         decision=decision,
         active_trade=selected if selected.exists else None,
@@ -173,3 +200,50 @@ def build_decision_state(
     )
     guarded.action = guarded.final_action
     return guarded
+
+
+def _selected_opposite_trade(
+    audit: ActiveTradeAudit,
+    selected_direction: Direction,
+) -> ActiveTradeCandidate | None:
+    if selected_direction not in {Direction.UP, Direction.DOWN}:
+        return None
+    selected_tf = audit.selected_active_trade_tf
+    mapping = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}
+    opposite_direction = Direction.DOWN if selected_direction == Direction.UP else Direction.UP
+    for tf, field in mapping.items():
+        if tf == selected_tf:
+            continue
+        candidate = getattr(audit, field)
+        if not candidate.exists:
+            continue
+        if _candidate_direction(candidate) != opposite_direction:
+            continue
+        if not candidate.fresh_entry_valid:
+            continue
+        if candidate.carry_state not in {CarryState.FRESH, CarryState.ACTIVE}:
+            continue
+        return candidate
+    return None
+
+
+def _can_close_and_flip(
+    selected: ActiveTradeCandidate,
+    opposite: ActiveTradeCandidate,
+) -> bool:
+    if not selected.exists or not opposite.exists:
+        return False
+    if not selected.existing_hold_valid:
+        return False
+    # Old side must be structurally finished (exhausting or explicitly finished),
+    # while opposite side must be a valid fresh setup with carry.
+    old_finished = selected.carry_state == CarryState.EXHAUSTING or selected.current_status.upper() == "FINISHED"
+    if not old_finished:
+        return False
+    if not opposite.fresh_entry_valid:
+        return False
+    if opposite.carry_state not in {CarryState.FRESH, CarryState.ACTIVE}:
+        return False
+    if opposite.too_late_to_chase:
+        return False
+    return True

@@ -37,11 +37,12 @@ def _official_trade(timeframe: str, direction: DivergenceDirection, carry_tf: st
 
 
 def _official_type3(timeframe: str, direction: Direction, carry_tf: str = "") -> ActiveTradeCandidate:
+    mapped = DivergenceDirection.BULLISH if direction == Direction.UP else DivergenceDirection.BEARISH
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
         origin_timeframe=timeframe,
-        direction=direction,
+        direction=mapped,
         setup_type=SetupType.TYPE_3,
         trade_function=TradeFunction.BREAKOUT,
         carry_timeframe=carry_tf,
@@ -183,6 +184,37 @@ def test_type3_is_not_treated_as_divergence() -> None:
     assert len(bullish) == 2
     assert all(str(row["source"]) == "TRADE" for row in bullish)
     assert all("Divergence" not in str(row["label"]) for row in bullish)
+
+
+def test_type3_rows_with_divergence_direction_are_normalized_for_multilevel() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=ActiveTradeCandidate(
+            timeframe="1h",
+            exists=True,
+            origin_timeframe="1h",
+            direction=DivergenceDirection.BULLISH,
+            setup_type=SetupType.TYPE_3,
+            trade_function=TradeFunction.BREAKOUT,
+            carry_timeframe="15m",
+            type_label="1H Bullish Type 3",
+            existing_hold_valid=True,
+        ),
+        tf_15m=ActiveTradeCandidate(
+            timeframe="15m",
+            exists=True,
+            origin_timeframe="15m",
+            direction=DivergenceDirection.BULLISH,
+            setup_type=SetupType.TYPE_3,
+            trade_function=TradeFunction.BREAKOUT,
+            carry_timeframe="5m",
+            type_label="15m Bullish Type 3",
+            existing_hold_valid=True,
+        ),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert story.active is True
+    assert story.direction == Direction.UP
 
 
 def test_active_execution_trade_ignores_selected_trade_when_direction_mismatches() -> None:

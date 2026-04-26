@@ -19,8 +19,10 @@ from ocean_engine.trade.active_trade_engine import (
     active_trade_audit_summary,
     build_active_trade_audit,
     build_type1_candidate,
+    detect_range_rejection_candidate,
     detect_type2_candidate,
     detect_type3_candidate,
+    detect_upgrade_candidate,
     detect_zone_reaction_candidate,
     select_active_trade,
 )
@@ -735,3 +737,83 @@ def test_selected_active_trade_tf_type3_equals_true_origin_timeframe() -> None:
     assert selected is not None
     assert selected.origin_timeframe == audit.selected_active_trade_tf
     assert selected.origin_timeframe in {"1h", "15m"}
+
+
+def test_range_rejection_candidate_created_at_upper_edge_with_bearish_rejection() -> None:
+    structure = StructureState(
+        timeframe="15m",
+        current_price=109.6,
+        active_leg=Leg(
+            start_index=5,
+            end_index=8,
+            direction=Direction.DOWN,
+            high=110.0,
+            low=109.2,
+            is_active=True,
+        ),
+        legs=[
+            Leg(start_index=0, end_index=2, direction=Direction.UP, high=110.2, low=104.0),
+            Leg(start_index=2, end_index=5, direction=Direction.DOWN, high=109.9, low=108.8),
+            Leg(start_index=5, end_index=8, direction=Direction.DOWN, high=110.0, low=109.2, is_active=True),
+        ],
+        range_state=RangeState(
+            timeframe="15m",
+            is_range=True,
+            active=True,
+            status="ACTIVE",
+            price_location="UPPER_EDGE",
+            upper_edge=110.0,
+            lower_edge=100.0,
+        ),
+    )
+    structures = {
+        "15m": structure,
+        "5m": StructureState(
+            timeframe="5m",
+            active_leg=Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=109.5, low=108.6, is_active=True),
+            legs=[Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=109.5, low=108.6, is_active=True)],
+        ),
+    }
+    candidate = detect_range_rejection_candidate(timeframe="15m", structures=structures)
+    assert candidate.exists is True
+    assert candidate.trade_function == TradeFunction.RANGE_REJECTION
+    assert candidate.direction == Direction.DOWN
+
+
+def test_upgrade_candidate_created_for_upgrade_risk_context() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            current_price=100.8,
+            active_leg=Leg(
+                start_index=7,
+                end_index=9,
+                direction=Direction.UP,
+                high=101.1,
+                low=100.2,
+                is_active=True,
+            ),
+            legs=[
+                Leg(start_index=0, end_index=3, direction=Direction.UP, high=100.9, low=94.2),
+                Leg(start_index=3, end_index=6, direction=Direction.DOWN, high=100.7, low=93.8),
+                Leg(start_index=7, end_index=9, direction=Direction.UP, high=101.1, low=100.2, is_active=True),
+            ],
+            range_state=RangeState(
+                timeframe="15m",
+                is_range=True,
+                active=True,
+                status="UPGRADE_RISK",
+                upper_edge=101.0,
+                lower_edge=94.0,
+            ),
+        ),
+        "5m": StructureState(
+            timeframe="5m",
+            active_leg=Leg(start_index=0, end_index=2, direction=Direction.UP, high=101.2, low=100.3, is_active=True),
+            legs=[Leg(start_index=0, end_index=2, direction=Direction.UP, high=101.2, low=100.3, is_active=True)],
+        ),
+    }
+    candidate = detect_upgrade_candidate(timeframe="15m", structures=structures)
+    assert candidate.exists is True
+    assert candidate.trade_function == TradeFunction.UPGRADE
+    assert candidate.fresh_entry_valid is False
