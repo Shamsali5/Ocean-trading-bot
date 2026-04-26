@@ -141,6 +141,7 @@ def guard_multilevel_requires_two_official_timeframes(
         return decision
     if multi_level_story.active and len(multi_level_story.confirmed_timeframes) < 2:
         multi_level_story.active = False
+        multi_level_story.higher_tf_status = "WEAKENING_CONTEXT_ONLY"
         decision = _add_reason(decision, "Multi-level story downgraded: fewer than two official timeframes.")
     return decision
 

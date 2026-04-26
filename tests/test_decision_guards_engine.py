@@ -185,8 +185,11 @@ def test_multilevel_active_with_fewer_than_two_confirmed_is_downgraded() -> None
 
 def test_apply_decision_guards_accumulates_guard_reasons() -> None:
     decision = _decision(FinalAction.BUY)
-    active_trade = _candidate(exists=False, fresh=False, carry_state=CarryState.EXHAUSTING, carry_tf="")
-    guarded = apply_decision_guards(decision, active_trade, DivergenceAudit(), {}, MultiLevelStory())
+    active_trade = _candidate(exists=True, fresh=False, carry_state=CarryState.EXHAUSTING, carry_tf="")
+    story = MultiLevelStory(active=True, confirmed_timeframes=["15m"], higher_tf_status="OFFICIAL_MULTI_LEVEL")
+    guarded = apply_decision_guards(decision, active_trade, DivergenceAudit(), {}, story)
     assert guarded.final_action == FinalAction.WAIT
     assert len(guarded.guard_reasons) >= 2
+    assert any("Fresh entry is not valid" in reason for reason in guarded.guard_reasons)
+    assert any("Multi-level story downgraded" in reason for reason in guarded.guard_reasons)
     assert guarded.valid is False
