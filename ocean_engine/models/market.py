@@ -194,7 +194,13 @@ class CarryStatus:
     """Carry engine state summary."""
 
     timeframe: str
+    direction: Direction = Direction.UNCLEAR
     state: CarryState = CarryState.UNCLEAR
+    cycle_complete: str = "UNCLEAR"
+    opposite_divergence: bool = False
+    opposite_impulse: bool = False
+    finished: bool = False
+    summary: str = ""
     invalidated: bool = False
     notes: str = ""
 
