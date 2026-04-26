@@ -29,6 +29,7 @@ from ocean_engine.structure.structure_engine import analyze_all_structures
 from ocean_engine.trade.active_trade_engine import build_active_trade_audit
 from ocean_engine.trade.decision_engine import build_decision_state
 from ocean_engine.trade.multi_level_engine import build_multi_level_story
+from ocean_engine.trade.story_engine import build_story_state
 from ocean_engine.zones.supply_demand_engine import detect_supply_demand_zones
 
 _TF_TO_FIELD = {
@@ -71,6 +72,14 @@ def build_market_report(
     zones = detect_supply_demand_zones(structures, divergence_audit)
     active_trade_audit = build_active_trade_audit(structures, divergence_audit)
     multi_level_story = build_multi_level_story(divergence_audit, active_trade_audit)
+    story_state = build_story_state(
+        structures=structures,
+        divergence_audit=divergence_audit,
+        active_trade_audit=active_trade_audit,
+        multi_level_story=multi_level_story,
+        range_states={tf: state.range_state for tf, state in structures.items()},
+        zones=zones if isinstance(zones, list) else [],
+    )
     decision = build_decision_state(
         structures=structures,
         divergence_audit=divergence_audit,
@@ -102,6 +111,7 @@ def build_market_report(
         active_trade_audits=[active_trade_audit],
         multi_level_story=multi_level_story,
         story=multi_level_story,
+        story_state=story_state,
         decision=decision,
         summary=summary,
     )

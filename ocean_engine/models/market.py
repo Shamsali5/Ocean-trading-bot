@@ -274,6 +274,25 @@ class MultiLevelStory:
 
 
 @dataclass(slots=True)
+class StoryState:
+    """Framework-level parent/current move context."""
+
+    highest_relevant_tf: str = ""
+    parent_timeframe: str = ""
+    parent_direction: Direction = Direction.UNCLEAR
+    parent_state: MarketState = MarketState.UNCLEAR
+    parent_active: bool = False
+    current_move_timeframe: str = ""
+    current_move_direction: Direction = Direction.UNCLEAR
+    current_move_origin: str = "UNCLEAR"
+    current_move_with_parent: bool | None = None
+    controlling_origin: str = ""
+    active_execution_trade: str = ""
+    carrying_timeframe: str = ""
+    summary: str = ""
+
+
+@dataclass(slots=True)
 class DecisionState:
     """Final deterministic decision payload before output formatting."""
 
@@ -326,6 +345,7 @@ class MarketReport:
     active_trade_audits: list[ActiveTradeAudit] = field(default_factory=list)
     multi_level_story: MultiLevelStory | None = None
     story: MultiLevelStory | None = None
+    story_state: StoryState | None = None
     decision: DecisionState | None = None
     summary: str = ""
     metadata: Mapping[str, str] = field(default_factory=dict)
