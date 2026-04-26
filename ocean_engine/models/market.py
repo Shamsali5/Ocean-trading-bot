@@ -250,10 +250,18 @@ class ActiveTradeAudit:
 class MultiLevelStory:
     """Cross-timeframe narrative produced by story synthesis."""
 
-    symbol: str
-    primary_timeframe: str
+    symbol: str = ""
+    primary_timeframe: str = ""
     bias: Direction = Direction.UNCLEAR
     supporting_timeframes: list[str] = field(default_factory=list)
+    active: bool = False
+    direction: str = "UNCLEAR"
+    confirmed_timeframes: list[str] = field(default_factory=list)
+    controlling_origin: str = ""
+    active_execution_trade: str = ""
+    carrying_timeframe: str = ""
+    higher_tf_status: str = "NONE"
+    explanation: str = ""
     summary: str = ""
 
 
