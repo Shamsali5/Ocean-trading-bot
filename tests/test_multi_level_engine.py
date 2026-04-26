@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import DivergenceDirection, DivergenceGrade, Direction, SetupType
+from ocean_engine.models.enums import DivergenceDirection, DivergenceGrade, Direction, SetupType, TradeFunction
 from ocean_engine.models.market import ActiveTradeAudit, ActiveTradeCandidate, DivergenceAudit, DivergenceState
 from ocean_engine.trade.multi_level_engine import (
     build_multi_level_story,
@@ -32,6 +32,20 @@ def _official_trade(timeframe: str, direction: DivergenceDirection, carry_tf: st
         setup_type=SetupType.TYPE_1,
         carry_timeframe=carry_tf,
         type_label=f"{timeframe} {'Bullish' if direction == DivergenceDirection.BULLISH else 'Bearish'} Type 1",
+        existing_hold_valid=True,
+    )
+
+
+def _official_type3(timeframe: str, direction: Direction, carry_tf: str = "") -> ActiveTradeCandidate:
+    return ActiveTradeCandidate(
+        timeframe=timeframe,
+        exists=True,
+        origin_timeframe=timeframe,
+        direction=direction,
+        setup_type=SetupType.TYPE_3,
+        trade_function=TradeFunction.BREAKOUT,
+        carry_timeframe=carry_tf,
+        type_label=f"{timeframe} {'Bullish' if direction == Direction.UP else 'Bearish'} Type 3",
         existing_hold_valid=True,
     )
 
@@ -91,6 +105,84 @@ def test_active_execution_trade_uses_selected_active_trade_if_same_direction() -
     )
     story = build_multi_level_story(divergence_audit, active_trade_audit)
     assert "15m" in story.active_execution_trade
+
+
+def test_type3_1h_plus_15m_bullish_is_active() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_type3("1h", Direction.UP, carry_tf="15m"),
+        tf_15m=_official_type3("15m", Direction.UP, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert story.active is True
+    assert story.direction == Direction.UP
+    assert story.higher_tf_status == "OFFICIAL_MULTI_LEVEL"
+
+
+def test_type3_1h_plus_15m_bearish_is_active() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_type3("1h", Direction.DOWN, carry_tf="15m"),
+        tf_15m=_official_type3("15m", Direction.DOWN, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert story.active is True
+    assert story.direction == Direction.DOWN
+    assert story.higher_tf_status == "OFFICIAL_MULTI_LEVEL"
+
+
+def test_type3_4h_plus_1h_bullish_uses_4h_as_controlling_origin() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_4h=_official_type3("4h", Direction.UP, carry_tf="1h"),
+        tf_1h=_official_type3("1h", Direction.UP, carry_tf="15m"),
+        selected_active_trade_tf="1h",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert story.active is True
+    assert "4H" in story.controlling_origin.upper()
+
+
+def test_only_15m_type3_is_not_multi_level_active() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_15m=_official_type3("15m", Direction.UP, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert story.active is False
+    assert story.higher_tf_status == "WEAKENING_CONTEXT_ONLY"
+
+
+def test_type3_active_execution_trade_uses_selected_active_trade() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_type3("1h", Direction.UP, carry_tf="15m"),
+        tf_15m=_official_type3("15m", Direction.UP, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert "15m" in story.active_execution_trade
+    assert "Type 3" in story.active_execution_trade
+
+
+def test_type3_carry_comes_from_selected_active_trade() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_type3("1h", Direction.UP, carry_tf="15m"),
+        tf_15m=_official_type3("15m", Direction.UP, carry_tf="5m"),
+        selected_active_trade_tf="15m",
+    )
+    story = build_multi_level_story(DivergenceAudit(), active_trade_audit)
+    assert story.carrying_timeframe == "5m"
+
+
+def test_type3_is_not_treated_as_divergence() -> None:
+    active_trade_audit = ActiveTradeAudit(
+        tf_1h=_official_type3("1h", Direction.UP, carry_tf="15m"),
+        tf_15m=_official_type3("15m", Direction.UP, carry_tf="5m"),
+    )
+    grouped = get_official_timeframes_by_direction(DivergenceAudit(), active_trade_audit)
+    bullish = grouped["BULLISH"]
+    assert len(bullish) == 2
+    assert all(str(row["source"]) == "TRADE" for row in bullish)
+    assert all("Divergence" not in str(row["label"]) for row in bullish)
 
 
 def test_active_execution_trade_ignores_selected_trade_when_direction_mismatches() -> None:

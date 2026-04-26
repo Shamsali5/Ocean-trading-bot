@@ -13,9 +13,6 @@ TIMEFRAME_FIELD_MAP = {
     "5m": "tf_5m",
     "3m": "tf_3m",
 }
-TYPE_SET = {SetupType.TYPE_1, SetupType.TYPE_2, SetupType.TYPE_3}
-
-
 def timeframe_rank(tf: str) -> int:
     """Return descending priority rank for timeframe labels."""
 
@@ -36,7 +33,12 @@ def get_official_timeframes_by_direction(
     divergence_audit: DivergenceAudit,
     active_trade_audit: ActiveTradeAudit,
 ) -> dict[str, list[dict[str, str | ActiveTradeCandidate]]]:
-    """Collect official rows by direction from divergence and trade audits."""
+    """Collect official setup rows by direction.
+
+    Official row sources:
+    1) Official divergence row (Type 1 context)
+    2) Existing Type 3 trade candidate row
+    """
 
     grouped: dict[str, list[dict[str, str | ActiveTradeCandidate]]] = {
         "BULLISH": [],
@@ -64,7 +66,7 @@ def get_official_timeframes_by_direction(
         trade_row = getattr(active_trade_audit, TIMEFRAME_FIELD_MAP[tf])
         if (
             trade_row.exists
-            and trade_row.setup_type in TYPE_SET
+            and trade_row.setup_type == SetupType.TYPE_3
             and trade_row.origin_timeframe == tf
             and trade_row.direction in (Direction.UP, Direction.DOWN)
         ):
@@ -73,7 +75,7 @@ def get_official_timeframes_by_direction(
                 {
                     "timeframe": tf,
                     "source": "TRADE",
-                    "label": trade_row.type_label or f"{normalize_tf_label(tf)} {direction_key.title()} Type",
+                    "label": trade_row.type_label or f"{normalize_tf_label(tf)} {direction_key.title()} Type 3",
                     "candidate": trade_row,
                 }
             )
@@ -234,6 +236,24 @@ def _choose_execution_row(
     ]
     if trade_rows:
         return trade_rows[0]
+    if selected_trade is not None:
+        selected_trade_direction = (
+            "BULLISH"
+            if selected_trade.direction == Direction.UP
+            else "BEARISH"
+            if selected_trade.direction == Direction.DOWN
+            else ""
+        )
+        if (
+            selected_trade_direction == selected_direction
+            and selected_trade.origin_timeframe in confirmed_timeframes
+        ):
+            return {
+                "timeframe": selected_trade.origin_timeframe,
+                "source": "TRADE",
+                "label": selected_trade.type_label or f"{normalize_tf_label(selected_trade.origin_timeframe)} Selected Trade",
+                "candidate": selected_trade,
+            }
     for row in rows:
         if str(row["timeframe"]) == lowest_tf:
             return row
