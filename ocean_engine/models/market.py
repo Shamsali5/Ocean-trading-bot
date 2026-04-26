@@ -167,6 +167,10 @@ class DivergenceState:
     acceleration_area_weaker: bool = False
     zero_axis_reset: bool = False
     price_zone: str = ""
+    divergence_price: float | None = None
+    divergence_time_utc: str = ""
+    impulse_price: float | None = None
+    impulse_time_utc: str = ""
     locked: bool = False
     notes: str = ""
 

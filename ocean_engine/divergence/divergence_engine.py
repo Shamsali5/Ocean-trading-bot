@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from ocean_engine.energy.vacc_engine import (
     get_segment_acceleration_area,
     get_segment_velocity_energy,
@@ -133,6 +135,60 @@ def detect_opposite_impulse(
     return False
 
 
+def detect_opposite_impulse_details(
+    candles: list[Candle],
+    abc: ABCStructure,
+    lookahead: int = 5,
+    body_multiplier: float = 1.2,
+) -> tuple[bool, float | None, int | None]:
+    """Return impulse confirmation plus first confirmed impulse price/time."""
+
+    if abc.segment_c is None or abc.direction not in (DivergenceDirection.BEARISH, DivergenceDirection.BULLISH):
+        return (False, None, None)
+    if lookahead < 1:
+        return (False, None, None)
+
+    c_end = abc.segment_c.end_index
+    start = c_end + 1
+    if start >= len(candles):
+        return (False, None, None)
+
+    end = min(len(candles), start + lookahead)
+    for index in range(start, end):
+        candle = candles[index]
+        body = abs(candle.close - candle.open)
+        history_start = max(0, index - lookahead)
+        history = candles[history_start:index]
+        if not history:
+            continue
+        average_body = sum(abs(item.close - item.open) for item in history) / len(history)
+        if body <= average_body * body_multiplier:
+            continue
+
+        candle_range = candle.high - candle.low
+        if candle_range <= 0.0:
+            continue
+
+        previous = candles[index - 1] if index > 0 else None
+        recent_window = candles[history_start:index]
+        recent_minor_low = min(item.low for item in recent_window) if recent_window else candle.low
+        recent_minor_high = max(item.high for item in recent_window) if recent_window else candle.high
+
+        if abc.direction == DivergenceDirection.BEARISH:
+            close_in_lower = candle.close <= (candle.low + 0.30 * candle_range)
+            break_prev = previous is not None and candle.close < previous.low
+            break_recent = candle.close < recent_minor_low
+            if close_in_lower and (break_prev or break_recent):
+                return (True, candle.close, candle.close_time)
+        else:
+            close_in_upper = candle.close >= (candle.high - 0.30 * candle_range)
+            break_prev = previous is not None and candle.close > previous.high
+            break_recent = candle.close > recent_minor_high
+            if close_in_upper and (break_prev or break_recent):
+                return (True, candle.close, candle.close_time)
+    return (False, None, None)
+
+
 def grade_divergence(
     abc_valid: bool,
     weakening_count: int,
@@ -170,7 +226,7 @@ def detect_divergence_from_abc(
 
     energy = compare_segment_energy(abc=abc, vacc_series=vacc_series)
     weakening_count = int(energy["weakening_count"])
-    impulse_confirmed = detect_opposite_impulse(candles=candles, abc=abc)
+    impulse_confirmed, impulse_price, impulse_time = detect_opposite_impulse_details(candles=candles, abc=abc)
     grade = grade_divergence(
         abc_valid=abc.abc_valid,
         weakening_count=weakening_count,
@@ -179,11 +235,16 @@ def detect_divergence_from_abc(
     exists = bool(abc.abc_valid and weakening_count >= 1 and impulse_confirmed)
 
     zone_text = ""
+    divergence_price: float | None = None
+    divergence_time_utc = ""
     if abc.segment_c is not None:
         if abc.direction == DivergenceDirection.BEARISH:
             zone_text = f"{abc.segment_c.high:.2f}-{abc.segment_c.high:.2f}"
+            divergence_price = abc.segment_c.high
         elif abc.direction == DivergenceDirection.BULLISH:
             zone_text = f"{abc.segment_c.low:.2f}-{abc.segment_c.low:.2f}"
+            divergence_price = abc.segment_c.low
+        divergence_time_utc = _close_time_to_utc(abc.segment_c.end_time)
 
     return DivergenceState(
         timeframe=abc.timeframe,
@@ -194,9 +255,21 @@ def detect_divergence_from_abc(
         weakening_count=weakening_count,
         impulse_confirmed=impulse_confirmed,
         price_zone=zone_text,
+        divergence_price=divergence_price,
+        divergence_time_utc=divergence_time_utc,
+        impulse_price=impulse_price,
+        impulse_time_utc=_close_time_to_utc(impulse_time),
         notes=(
             f"abc_valid={abc.abc_valid}, weakening={weakening_count}, "
             f"impulse={impulse_confirmed}, velocity_weaker={energy['velocity_weaker']}, "
             f"acc_area_weaker={energy['acceleration_area_weaker']}, zero_reset={energy['zero_axis_reset']}"
         ),
     )
+
+
+def _close_time_to_utc(close_time: int | None) -> str:
+    """Convert millisecond epoch close time into UTC ISO string."""
+
+    if close_time is None:
+        return ""
+    return datetime.fromtimestamp(close_time / 1000.0, tz=timezone.utc).isoformat()

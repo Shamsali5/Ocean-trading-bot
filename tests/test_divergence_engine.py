@@ -247,6 +247,38 @@ def test_price_zone_uses_segment_c_extreme_area() -> None:
     assert "111." in state.price_zone
 
 
+def test_official_divergence_includes_event_price_and_time_metadata() -> None:
+    a = _leg(2, 6, Direction.UP, low=90.0, high=110.0)
+    b = _leg(7, 9, Direction.DOWN, low=98.0, high=109.0)
+    c = _leg(10, 14, Direction.UP, low=97.0, high=111.5)
+    abc = _abc(DivergenceDirection.BEARISH, a, b, c)
+
+    velocity = [0.0] * 30
+    acceleration = [0.0] * 30
+    for idx in range(2, 7):
+        velocity[idx] = 2.0
+        acceleration[idx] = 0.4
+    for idx in range(10, 15):
+        velocity[idx] = 0.6
+        acceleration[idx] = 0.1
+    vacc = _vacc_with_values(velocity, acceleration)
+
+    candles = _make_flat_candles(length=25, close=100.0)
+    candles[14] = _candle(105.5, 111.8, 104.0, 111.5, 14)
+    candles[15] = _candle(111.2, 111.6, 103.0, 103.2, 15)
+
+    state = detect_divergence_from_abc(abc, candles, vacc)
+    assert state.divergence_price is not None
+    assert state.divergence_price == candles[14].close
+    assert state.divergence_time_utc
+    assert state.divergence_time_utc.startswith("1970-01-01T")
+    assert state.impulse_confirmed is True
+    assert state.impulse_price is not None
+    assert state.impulse_price == candles[15].close
+    assert state.impulse_time_utc
+    assert state.impulse_time_utc.startswith("1970-01-01T")
+
+
 def test_compare_segment_energy_zero_axis_reset_counts_as_weakening() -> None:
     a = _leg(1, 3, Direction.UP, low=90.0, high=100.0)
     b = _leg(4, 6, Direction.DOWN, low=95.0, high=99.0)

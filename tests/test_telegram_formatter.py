@@ -56,6 +56,10 @@ def _sample_report() -> MarketReport:
             grade=DivergenceGrade.STRONG,
             impulse_confirmed=True,
             price_zone="101.00-102.00",
+            divergence_price=101.55,
+            divergence_time_utc="2026-04-26T05:45:00Z",
+            impulse_price=102.10,
+            impulse_time_utc="2026-04-26T05:48:00Z",
         ),
         selected_last_meaningful_tf="15m",
     )
@@ -177,6 +181,13 @@ def test_last_meaningful_formatter_shows_timeframe_and_direction() -> None:
     report = _sample_report()
     text = format_divergence_audit(report.divergence_audit)
     assert "Last Meaningful: 15m BULLISH" in text
+
+
+def test_divergence_formatter_shows_divergence_and_impulse_price_time() -> None:
+    report = _sample_report()
+    text = format_divergence_audit(report.divergence_audit)
+    assert "Divergence Price/Time: 101.55 @ 2026-04-26T05:45:00Z" in text
+    assert "Impulse Price/Time: 102.10 @ 2026-04-26T05:48:00Z" in text
 
 
 def test_next_watch_shows_return_to_range_pressure_on_failed_breakout() -> None:

@@ -63,7 +63,10 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
     """Format divergence audit section safely."""
 
     if divergence_audit is None:
-        return "Audit: N/A\nLast Meaningful: N/A\nABC: N/A\nImpulse: N/A\nGrade: N/A"
+        return (
+            "Audit: N/A\nLast Meaningful: N/A\nABC: N/A\nImpulse: N/A\n"
+            "Divergence Price/Time: N/A\nImpulse Price/Time: N/A\nGrade: N/A"
+        )
 
     audit_line = divergence_audit_summary(divergence_audit)
     selected = select_last_meaningful_divergence(divergence_audit)
@@ -71,6 +74,8 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
         last_meaningful = "N/A"
         abc = "N/A"
         impulse = "N/A"
+        divergence_price_time = "N/A"
+        impulse_price_time = "N/A"
         grade = "N/A"
     else:
         direction = _format_enum_value(getattr(selected, "direction", "N/A"))
@@ -81,12 +86,22 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
         else:
             abc = "No"
             impulse = "No"
+        divergence_price_time = _format_price_time(
+            price=getattr(selected, "divergence_price", None),
+            timestamp=getattr(selected, "divergence_time_utc", ""),
+        )
+        impulse_price_time = _format_price_time(
+            price=getattr(selected, "impulse_price", None),
+            timestamp=getattr(selected, "impulse_time_utc", ""),
+        )
         grade = _format_enum_value(getattr(selected, "grade", "N/A"))
     return (
         f"Audit: {audit_line}\n"
         f"Last Meaningful: {last_meaningful}\n"
         f"ABC: {abc}\n"
         f"Impulse: {impulse}\n"
+        f"Divergence Price/Time: {divergence_price_time}\n"
+        f"Impulse Price/Time: {impulse_price_time}\n"
         f"Grade: {grade}"
     )
 
@@ -369,6 +384,15 @@ def _safe_price(value: Any) -> str:
     if isinstance(value, (int, float)):
         return f"{value:,.2f}"
     return "N/A"
+
+
+def _format_price_time(price: Any, timestamp: Any) -> str:
+    if isinstance(price, (int, float)):
+        price_text = f"{float(price):,.2f}"
+    else:
+        price_text = "N/A"
+    time_text = _text(timestamp, default="N/A")
+    return f"{price_text} @ {time_text}"
 
 
 def _latest_divergence_audit(report: MarketReport) -> DivergenceAudit | None:
