@@ -10,6 +10,7 @@ from ocean_engine.models.market import (
     ActiveTradeCandidate,
     DivergenceAudit,
     DivergenceState,
+    Leg,
     StructureState,
     SupplyDemandZone,
 )
@@ -89,6 +90,9 @@ def build_type1_candidate(
         else "Reclaim above origin zone confirms invalidation."
     )
 
+    start_price = divergence.impulse_price if divergence.impulse_price is not None else divergence.divergence_price
+    start_time = divergence.impulse_time_utc or divergence.divergence_time_utc
+
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
@@ -98,8 +102,8 @@ def build_type1_candidate(
         type_label=type_label,
         trade_function=trade_function,
         origin_price_zone=origin_price_zone,
-        confirmation_price=None,
-        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        confirmation_price=start_price,
+        confirmation_time_utc=start_time,
         earliest_legal_trigger_price=None,
         carry_timeframe=carry.timeframe,
         carry_direction=carry.direction,
@@ -223,8 +227,8 @@ def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         trade_function=TradeFunction.PULLBACK_CONTINUATION,
         type_label=type_label,
         origin_price_zone=prior_type1.origin_price_zone,
-        confirmation_price=structure.current_price,
-        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        confirmation_price=trigger_price,
+        confirmation_time_utc=_leg_end_time_utc(continuation_leg),
         earliest_legal_trigger_price=trigger_price,
         carry_timeframe=carry_tf,
         carry_direction=carry_direction,
@@ -301,6 +305,11 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         carry_state in {CarryState.FRESH, CarryState.ACTIVE, CarryState.MATURE} and not carry_finished
     )
 
+    start_time = _confirmation_time_from_candle_index(
+        structure=structure,
+        index=range_state.first_break_index,
+    )
+
     return ActiveTradeCandidate(
         timeframe=timeframe,
         exists=True,
@@ -310,8 +319,8 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         trade_function=TradeFunction.BREAKOUT,
         type_label=type_label,
         origin_price_zone=breakout_band,
-        confirmation_price=structure.current_price,
-        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        confirmation_price=trigger_price,
+        confirmation_time_utc=start_time,
         earliest_legal_trigger_price=trigger_price,
         carry_timeframe=carry_tf,
         carry_direction=carry_direction,
@@ -449,8 +458,8 @@ def detect_zone_reaction_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         trade_function=TradeFunction.SUPPLY_DEMAND_REACTION,
         type_label=type_label,
         origin_price_zone=zone.price_band,
-        confirmation_price=structure.current_price,
-        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        confirmation_price=trigger,
+        confirmation_time_utc=_leg_end_time_utc(restart_leg),
         earliest_legal_trigger_price=trigger,
         carry_timeframe=carry_tf,
         carry_direction=carry_direction,
@@ -534,8 +543,8 @@ def detect_range_rejection_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         trade_function=TradeFunction.RANGE_REJECTION,
         type_label=f"{tf_label} {dir_label} Range Rejection",
         origin_price_zone=origin_band,
-        confirmation_price=structure.current_price,
-        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        confirmation_price=trigger,
+        confirmation_time_utc=_leg_end_time_utc(structure.active_leg),
         earliest_legal_trigger_price=trigger,
         carry_timeframe=carry_tf,
         carry_direction=carry_direction,
@@ -597,7 +606,7 @@ def detect_upgrade_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         if isinstance(range_state.lower_edge, (int, float)) and isinstance(range_state.upper_edge, (int, float))
         else "",
         confirmation_price=structure.current_price,
-        confirmation_time_utc=datetime.now(timezone.utc).isoformat(),
+        confirmation_time_utc=_leg_end_time_utc(structure.active_leg),
         earliest_legal_trigger_price=structure.current_price,
         carry_timeframe=carry_tf,
         carry_direction=carry_direction,
@@ -793,4 +802,31 @@ def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:
     if candidate.carry_direction in {Direction.UP, Direction.DOWN}:
         return candidate.carry_direction
     return Direction.UNCLEAR
+
+
+def _confirmation_time_from_candle_index(structure: StructureState, index: int | None) -> str:
+    """Resolve candle close time from detected breakout index."""
+
+    if index is None or index < 0:
+        return ""
+    if not structure.candles or index >= len(structure.candles):
+        return ""
+    close_time = getattr(structure.candles[index], "close_time", None)
+    return _format_close_time_utc(close_time)
+
+
+def _leg_end_time_utc(leg: Leg | None) -> str:
+    """Convert leg end-time into UTC ISO string when available."""
+
+    if leg is None:
+        return ""
+    return _format_close_time_utc(getattr(leg, "end_time", None))
+
+
+def _format_close_time_utc(close_time_ms: int | None) -> str:
+    """Format epoch-millisecond close time into UTC ISO string."""
+
+    if close_time_ms is None:
+        return ""
+    return datetime.fromtimestamp(close_time_ms / 1000.0, tz=timezone.utc).isoformat()
 
