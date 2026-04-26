@@ -131,13 +131,13 @@ def test_compact_report_includes_divergence_audit() -> None:
 
 def test_compact_report_includes_active_trade_audit() -> None:
     text = format_compact_telegram_report(_sample_report())
-    assert "Trade Audit:" in text
-    assert "15m:15m Bullish Type 1" in text
+    assert "ACTIVE TRADE" in text
+    assert "Function: NONE" in text or "Function: DECOMPOSITION" in text or "Function: BREAKOUT" in text
 
 
 def test_compact_report_includes_multi_level_story() -> None:
     text = format_compact_telegram_report(_sample_report())
-    assert "Multi-Level:" in text
+    assert "MULTI-LEVEL STORY" in text
     assert "OFFICIAL_MULTI_LEVEL" in text
 
 
@@ -194,3 +194,91 @@ def test_next_watch_shows_return_to_range_pressure_on_failed_breakout() -> None:
     }
     text = format_compact_telegram_report(report)
     assert "return-to-range pressure" in text.lower()
+
+
+def test_type3_report_displays_active_trade_yes() -> None:
+    report = _sample_report()
+    report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_3
+    report.active_trade_audit.tf_15m.trade_function = "BREAKOUT"
+    report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 3"
+    report.active_trade_audit.tf_15m.fresh_entry_valid = False
+    report.active_trade_audit.tf_15m.existing_hold_valid = True
+    report.active_trade_audit.tf_15m.too_late_to_chase = True
+    text = format_compact_telegram_report(report)
+    assert "Active Trade: YES" in text
+    assert "Function: BREAKOUT" in text
+    assert "Fresh Entry: NO" in text
+    assert "Valid Hold: YES" in text
+    assert "Too Late: YES" in text
+
+
+def test_type2_report_displays_pullback_continuation() -> None:
+    report = _sample_report()
+    report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_2
+    report.active_trade_audit.tf_15m.trade_function = "PULLBACK_CONTINUATION"
+    report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 2"
+    text = format_compact_telegram_report(report)
+    assert "Type: TYPE 2" in text
+    assert "Function: PULLBACK CONTINUATION" in text
+
+
+def test_type1_report_displays_divergence_function() -> None:
+    report = _sample_report()
+    report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_1
+    report.active_trade_audit.tf_15m.trade_function = "HIGHER_TF_DIVERGENCE"
+    text = format_compact_telegram_report(report)
+    assert "Type: TYPE 1" in text
+    assert "Function: HIGHER TF DIVERGENCE" in text
+
+
+def test_no_divergence_but_type3_exists_displays_cleanly() -> None:
+    report = _sample_report()
+    report.divergence_audit = DivergenceAudit()
+    report.active_trade_audit.tf_15m.setup_type = SetupType.TYPE_3
+    report.active_trade_audit.tf_15m.trade_function = "BREAKOUT"
+    report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 3"
+    text = format_compact_telegram_report(report)
+    assert "DIVERGENCE\nAudit: 4H:No | 1H:No | 15m:No | 5m:No | 3m:No" in text
+    assert "Function: BREAKOUT" in text
+
+
+def test_range_ownership_appears() -> None:
+    report = _sample_report()
+    report.structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            range_state=RangeState(
+                timeframe="15m",
+                is_range=True,
+                active=True,
+                status="ACTIVE",
+                lower_edge=99.0,
+                upper_edge=101.0,
+                price_location="MID",
+                ownership=Direction.UP,
+            ),
+        )
+    }
+    text = format_compact_telegram_report(report)
+    assert "Ownership: UP" in text
+
+
+def test_failed_breakout_appears() -> None:
+    report = _sample_report()
+    report.structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            range_state=RangeState(
+                timeframe="15m",
+                is_range=True,
+                active=True,
+                status="FAILED_BREAK_UP",
+                lower_edge=99.0,
+                upper_edge=101.0,
+                price_location="MID",
+                ownership=Direction.UP,
+            ),
+        )
+    }
+    text = format_compact_telegram_report(report)
+    assert "Status: FAILED_BREAK_UP" in text

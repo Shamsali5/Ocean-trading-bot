@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from ocean_engine.divergence.divergence_audit import (
@@ -39,15 +38,25 @@ def format_final_action(decision: DecisionState) -> str:
 def format_market_story(report: MarketReport) -> str:
     """Format compact market story section."""
 
-    story = getattr(report, "multi_level_story", None) or getattr(report, "story", None)
-    parent = "N/A"
-    current = "N/A"
-    multi = "N/A"
-    if story is not None:
-        parent = _text(getattr(story, "controlling_origin", "N/A"))
-        current = _text(getattr(story, "active_execution_trade", "N/A"))
-        multi = format_multi_level_story(story)
-    return f"Parent: {parent}\nCurrent: {current}\nMulti-Level: {multi}"
+    story_state = getattr(report, "story_state", None)
+    parent = _text(getattr(story_state, "parent_timeframe", "N/A"))
+    parent_direction = _format_enum_value(getattr(story_state, "parent_direction", "N/A"))
+    parent_state = _format_enum_value(getattr(story_state, "parent_state", "N/A"))
+    current_tf = _text(getattr(story_state, "current_move_timeframe", "N/A"))
+    current_direction = _format_enum_value(getattr(story_state, "current_move_direction", "N/A"))
+    current_origin = _text(getattr(story_state, "current_move_origin", "N/A"))
+    with_parent = getattr(story_state, "current_move_with_parent", None)
+    if with_parent is True:
+        alignment = "WITH_PARENT"
+    elif with_parent is False:
+        alignment = "AGAINST_PARENT"
+    else:
+        alignment = "UNCLEAR"
+    return (
+        f"Parent Move: {parent} {parent_direction} {parent_state}\n"
+        f"Current Move: {current_tf} {current_direction} ({current_origin})\n"
+        f"Current vs Parent: {alignment}"
+    )
 
 
 def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
@@ -94,12 +103,7 @@ def format_carry_status(report: MarketReport) -> str:
     state = _format_enum_value(getattr(candidate, "carry_state", "N/A")) if candidate else "N/A"
     finished = "Yes" if getattr(candidate, "too_late_to_chase", False) and state == "EXHAUSTING" else "No"
 
-    return (
-        f"Carry TF: {carry_tf}\n"
-        f"Direction: {direction}\n"
-        f"State: {state}\n"
-        f"Finished: {finished}"
-    )
+    return f"Carry TF: {carry_tf}\nDirection: {direction}\nState: {state}\nFinished: {finished}"
 
 
 def format_range_status(structures: dict[str, Any] | None) -> str:
@@ -116,12 +120,21 @@ def format_range_status(structures: dict[str, Any] | None) -> str:
         range_state = getattr(structure, "range_state", None)
         if range_state is None:
             continue
-        active = "Yes" if getattr(range_state, "active", False) else "No"
+        active = "YES" if getattr(range_state, "active", False) else "NO"
         location = _text(getattr(range_state, "price_location", "N/A"))
+        status = _text(getattr(range_state, "status", "N/A"))
+        ownership = _format_enum_value(getattr(range_state, "ownership", "N/A"))
         lower = getattr(range_state, "lower_edge", None)
         upper = getattr(range_state, "upper_edge", None)
         band = f"{lower:.2f}-{upper:.2f}" if isinstance(lower, (int, float)) and isinstance(upper, (int, float)) else "N/A"
-        return f"{_normalize_tf(tf)} Range Active: {active} | Location: {location} | Band: {band}"
+        return (
+            f"Timeframe: {_normalize_tf(tf)}\n"
+            f"Range Active: {active}\n"
+            f"Status: {status}\n"
+            f"Location: {location}\n"
+            f"Ownership: {ownership}\n"
+            f"Band: {band}"
+        )
     return "N/A"
 
 
@@ -146,16 +159,27 @@ def format_active_trade(active_trade_audit: ActiveTradeAudit | None) -> str:
     """Format selected active trade and audit rows."""
 
     if active_trade_audit is None:
-        return "N/A\nTrade Audit: N/A"
+        return "Active Trade: NO\nTrade Audit: N/A"
 
     selected = _selected_candidate(active_trade_audit)
     if selected is None:
-        selected_text = "N/A"
+        selected_text = "Active Trade: NO"
     else:
+        setup = _format_enum_value(getattr(selected, "setup_type", "N/A"))
+        function = _format_enum_value(getattr(selected, "trade_function", "N/A"))
+        fresh = "YES" if getattr(selected, "fresh_entry_valid", False) else "NO"
+        hold = "YES" if getattr(selected, "existing_hold_valid", False) else "NO"
+        too_late = "YES" if getattr(selected, "too_late_to_chase", False) else "NO"
         selected_text = (
-            f"{_normalize_tf(selected.origin_timeframe)} "
-            f"{_format_enum_value(getattr(selected, 'direction', 'N/A'))} "
-            f"{_text(getattr(selected, 'type_label', 'N/A'))}"
+            "Active Trade: YES\n"
+            f"Timeframe: {_normalize_tf(selected.origin_timeframe)}\n"
+            f"Direction: {_format_enum_value(getattr(selected, 'direction', 'N/A'))}\n"
+            f"Type: {setup}\n"
+            f"Label: {_text(getattr(selected, 'type_label', 'N/A'))}\n"
+            f"Function: {function}\n"
+            f"Fresh Entry: {fresh}\n"
+            f"Valid Hold: {hold}\n"
+            f"Too Late: {too_late}"
         )
     return f"{selected_text}\nTrade Audit: {active_trade_audit_summary(active_trade_audit)}"
 
@@ -170,7 +194,12 @@ def format_multi_level_story(story: MultiLevelStory | None) -> str:
     confirmed_text = ",".join(_normalize_tf(tf) for tf in confirmed) if confirmed else "N/A"
     direction = _format_enum_value(getattr(story, "direction", "N/A"))
     status = _text(getattr(story, "higher_tf_status", "N/A"))
-    return f"{active} {direction} [{confirmed_text}] ({status})"
+    return (
+        f"Status: {active}\n"
+        f"Direction: {direction}\n"
+        f"Confirmed TFs: {confirmed_text}\n"
+        f"Higher TF Status: {status}"
+    )
 
 
 def format_position_management(decision: DecisionState | None) -> str:
@@ -213,6 +242,7 @@ def format_compact_telegram_report(report: MarketReport) -> str:
     divergence_audit = getattr(report, "divergence_audit", None) or _latest_divergence_audit(report)
     active_trade_audit = getattr(report, "active_trade_audit", None) or _latest_active_trade_audit(report)
     story = getattr(report, "multi_level_story", None) or getattr(report, "story", None)
+    story_state = getattr(report, "story_state", None)
     zones = getattr(report, "zones", None)
     zone_list: list[SupplyDemandZone] = []
     if isinstance(zones, dict):
@@ -223,6 +253,9 @@ def format_compact_telegram_report(report: MarketReport) -> str:
         zone_list = zones
 
     decision_block = format_final_action(decision) if decision is not None else "Signal: WAIT\nManagement: NONE\nReason: N/A"
+    controlling_origin = _text(getattr(story_state, "controlling_origin", "N/A"), default="N/A")
+    active_execution = _text(getattr(story_state, "active_execution_trade", "N/A"), default="N/A")
+    carry_tf = _text(getattr(story_state, "carrying_timeframe", "N/A"), default="N/A")
     message = (
         f"🌊 OCEAN SIGNAL | {symbol}\n"
         f"Price: {current_price}\n"
@@ -239,6 +272,11 @@ def format_compact_telegram_report(report: MarketReport) -> str:
         f"RANGE / LOCATION\n{format_range_status(structures)}\n\n"
         f"━━━━━━━━━━━━━━\n"
         f"SUPPLY / DEMAND\n{format_zones(zone_list)}\n\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"MULTI-LEVEL STORY\n{format_multi_level_story(story)}\n"
+        f"Controlling Origin: {controlling_origin}\n"
+        f"Active Execution Trade: {active_execution}\n"
+        f"Carry Timeframe: {carry_tf}\n\n"
         f"━━━━━━━━━━━━━━\n"
         f"ACTIVE TRADE\n{format_active_trade(active_trade_audit)}\n\n"
         f"━━━━━━━━━━━━━━\n"
@@ -282,14 +320,6 @@ def _latest_active_trade_audit(report: MarketReport) -> ActiveTradeAudit | None:
     if isinstance(audits, list) and audits:
         return audits[-1]
     return None
-
-
-def _get_divergence_row(audit: DivergenceAudit, timeframe: str) -> Any:
-    mapping = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}
-    field = mapping.get(timeframe)
-    if not field:
-        return None
-    return getattr(audit, field, None)
 
 
 def _selected_candidate(audit: ActiveTradeAudit | None) -> ActiveTradeCandidate | None:
