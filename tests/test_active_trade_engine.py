@@ -182,7 +182,7 @@ def test_15m_official_divergence_creates_15m_type1_candidate(monkeypatch) -> Non
     assert candidate.exists is True
     assert candidate.origin_timeframe == "15m"
     assert candidate.setup_type == SetupType.TYPE_1
-    assert "Type 1" in candidate.type_label
+    assert candidate.type_label == "15m Bullish Type 1"
 
 
 def test_15m_candidate_uses_5m_carry_timeframe(monkeypatch) -> None:
@@ -206,7 +206,7 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
     candidate = build_type1_candidate("1h", divergence_audit.tf_1h, structures, divergence_audit)
     assert candidate.exists is True
     assert candidate.origin_timeframe == "1h"
-    assert candidate.type_label.startswith("1H")
+    assert candidate.type_label == "1H Bearish Type 1"
 
 
 def test_bullish_range_breakout_creates_bullish_type3_candidate() -> None:
@@ -304,6 +304,7 @@ def test_bullish_type2_after_bullish_type1() -> None:
     assert candidate.direction == DivergenceDirection.BULLISH
     assert candidate.origin_timeframe == "15m"
     assert candidate.carry_timeframe == "5m"
+    assert candidate.type_label == "15m Bullish Type 2"
 
 
 def test_bearish_type2_after_bearish_type1() -> None:
@@ -331,6 +332,7 @@ def test_bearish_type2_after_bearish_type1() -> None:
     assert candidate.direction == DivergenceDirection.BEARISH
     assert candidate.origin_timeframe == "15m"
     assert candidate.carry_timeframe == "5m"
+    assert candidate.type_label == "15m Bearish Type 2"
 
 
 def test_type2_invalid_when_type1_missing() -> None:

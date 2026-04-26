@@ -45,7 +45,7 @@ def _candidate(
         existing_hold_valid=fresh,
         carry_timeframe=carry_tf,
         carry_state=carry_state,
-        type_label=f"{origin_tf} Type 1",
+        type_label=f"{origin_tf} Bullish Type 1" if direction == Direction.UP else f"{origin_tf} Bearish Type 1",
     )
 
 
