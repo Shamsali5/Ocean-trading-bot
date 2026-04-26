@@ -147,8 +147,15 @@ class DivergenceState:
     """Divergence synthesis outcome for one timeframe."""
 
     timeframe: str
+    exists: bool = False
     direction: DivergenceDirection = DivergenceDirection.NONE
     grade: DivergenceGrade = DivergenceGrade.INVALID
+    weakening_count: int = 0
+    impulse_confirmed: bool = False
+    velocity_weaker: bool = False
+    acceleration_area_weaker: bool = False
+    zero_axis_reset: bool = False
+    price_zone: str = ""
     locked: bool = False
     notes: str = ""
 
