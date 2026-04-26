@@ -64,7 +64,7 @@ def test_parent_4h_up_and_active_15m_bullish_type3_is_with_parent() -> None:
         divergence_audit=DivergenceAudit(),
         active_trade_audit=audit,
         multi_level_story=MultiLevelStory(),
-        ranges=None,
+        range_states=None,
         zones=[],
     )
     assert isinstance(story, StoryState)
@@ -91,7 +91,7 @@ def test_parent_4h_up_and_active_15m_bearish_type1_is_against_parent() -> None:
         divergence_audit=DivergenceAudit(),
         active_trade_audit=audit,
         multi_level_story=MultiLevelStory(),
-        ranges=None,
+        range_states=None,
         zones=[],
     )
     assert story.parent_timeframe == "4h"
@@ -109,7 +109,7 @@ def test_no_active_trade_sets_current_move_unclear() -> None:
         divergence_audit=DivergenceAudit(),
         active_trade_audit=ActiveTradeAudit(),
         multi_level_story=MultiLevelStory(),
-        ranges=None,
+        range_states=None,
         zones=[],
     )
     assert story.current_move_timeframe == ""
@@ -136,7 +136,7 @@ def test_summary_includes_parent_current_origin_and_carry() -> None:
             active_execution_trade="15m Bullish Type 3",
             carrying_timeframe="5m",
         ),
-        ranges={"15m": RangeState(timeframe="15m", active=True)},
+        range_states={"15m": RangeState(timeframe="15m", active=True)},
         zones=[SupplyDemandZone(timeframe="15m", zone_type=ZoneType.DEMAND, lower=100.0, upper=101.0)],
     )
     text = story.summary.lower()

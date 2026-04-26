@@ -285,7 +285,7 @@ class StoryState:
     current_move_timeframe: str = ""
     current_move_direction: Direction = Direction.UNCLEAR
     current_move_origin: str = "UNCLEAR"
-    current_move_with_parent: bool | None = None
+    current_move_with_parent: bool = False
     controlling_origin: str = ""
     active_execution_trade: str = ""
     carrying_timeframe: str = ""

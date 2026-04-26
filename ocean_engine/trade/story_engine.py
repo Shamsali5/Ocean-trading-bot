@@ -24,12 +24,13 @@ def build_story_state(
     divergence_audit: DivergenceAudit,
     active_trade_audit: ActiveTradeAudit,
     multi_level_story: MultiLevelStory | None,
+    range_states: dict[str, object] | None = None,
     ranges: dict[str, object] | None = None,
     zones: list[SupplyDemandZone] | None = None,
 ) -> StoryState:
     """Build parent/current move context without predictive assumptions."""
 
-    del divergence_audit, ranges, zones  # Reserved for future story enrichments.
+    del divergence_audit, range_states, ranges, zones  # Reserved for future story enrichments.
 
     highest_relevant_tf = _highest_relevant_timeframe(structures)
     parent_tf = _resolve_parent_timeframe(structures, highest_relevant_tf)
@@ -59,27 +60,24 @@ def build_story_state(
         if not carrying_timeframe:
             carrying_timeframe = multi_level_story.carrying_timeframe
 
-    current_move_with_parent: bool | None
-    if current_move_direction not in {Direction.UP, Direction.DOWN}:
-        current_move_with_parent = None
-    else:
-        current_move_with_parent = (
-            parent_active
-            and parent_direction in {Direction.UP, Direction.DOWN}
-            and current_move_direction == parent_direction
-        )
+    current_move_with_parent = (
+        parent_active
+        and parent_direction in {Direction.UP, Direction.DOWN}
+        and current_move_direction in {Direction.UP, Direction.DOWN}
+        and current_move_direction == parent_direction
+    )
 
     parent_direction_label = parent_direction.value if isinstance(parent_direction, Direction) else str(parent_direction)
     current_direction_label = (
         current_move_direction.value if isinstance(current_move_direction, Direction) else str(current_move_direction)
     )
     parent_state_label = parent_state.value if isinstance(parent_state, MarketState) else str(parent_state)
-    if current_move_with_parent is True:
-        with_parent_label = "WITH_PARENT"
-    elif current_move_with_parent is False:
-        with_parent_label = "AGAINST_PARENT"
-    else:
+    if current_move_direction not in {Direction.UP, Direction.DOWN}:
         with_parent_label = "UNCLEAR"
+    elif current_move_with_parent is True:
+        with_parent_label = "WITH_PARENT"
+    else:
+        with_parent_label = "AGAINST_PARENT"
     summary = (
         f"parent={parent_tf or 'UNCLEAR'} {parent_direction_label} {parent_state_label} | "
         f"current={current_move_timeframe or 'UNCLEAR'} {current_direction_label} | "
@@ -140,6 +138,8 @@ def _origin_from_setup(setup_type: SetupType) -> str:
 
 def _candidate_direction(candidate: ActiveTradeCandidate) -> Direction:
     value = getattr(candidate.direction, "value", candidate.direction)
+    if value in (Direction.UP, Direction.DOWN):
+        return value
     if str(value).upper() == "BULLISH":
         return Direction.UP
     if str(value).upper() == "BEARISH":
