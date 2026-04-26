@@ -166,3 +166,10 @@ def test_formatter_does_not_change_decision_final_action() -> None:
     before = report.decision.final_action
     _ = format_compact_telegram_report(report)
     assert report.decision.final_action == before
+
+
+def test_compact_report_shows_type3_active_trade_label() -> None:
+    report = _sample_report()
+    report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 3"
+    text = format_compact_telegram_report(report)
+    assert "15m Bullish Type 3" in text

@@ -9,6 +9,7 @@ from ocean_engine.models.market import (
     DivergenceAudit,
     DivergenceState,
     Leg,
+    RangeState,
     StructureState,
 )
 from ocean_engine.trade.active_trade_engine import (
@@ -81,6 +82,48 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
     assert candidate.exists is True
     assert candidate.origin_timeframe == "1h"
     assert candidate.type_label.startswith("1H")
+
+
+def test_type3_bullish_breakout_detected_on_1h_without_official_divergence() -> None:
+    structure_1h = StructureState(
+        timeframe="1h",
+        current_price=102.5,
+        range_state=RangeState(
+            timeframe="1h",
+            is_range=True,
+            active=True,
+            upper_edge=100.0,
+            lower_edge=90.0,
+            price_location="OUTSIDE",
+        ),
+    )
+    structures = {"1h": structure_1h}
+    audit = build_active_trade_audit(structures, DivergenceAudit())
+    assert audit.tf_1h.exists is True
+    assert audit.tf_1h.setup_type == SetupType.TYPE_3
+    assert audit.tf_1h.direction == Direction.UP
+    assert audit.tf_1h.type_label == "1H Bullish Type 3"
+
+
+def test_type3_bearish_breakdown_detected_on_15m_without_official_divergence() -> None:
+    structure_15m = StructureState(
+        timeframe="15m",
+        current_price=87.0,
+        range_state=RangeState(
+            timeframe="15m",
+            is_range=True,
+            active=True,
+            upper_edge=100.0,
+            lower_edge=90.0,
+            price_location="OUTSIDE",
+        ),
+    )
+    structures = {"15m": structure_15m}
+    audit = build_active_trade_audit(structures, DivergenceAudit())
+    assert audit.tf_15m.exists is True
+    assert audit.tf_15m.setup_type == SetupType.TYPE_3
+    assert audit.tf_15m.direction == Direction.DOWN
+    assert audit.tf_15m.type_label == "15m Bearish Type 3"
 
 
 def test_5m_carry_does_not_become_5m_type1_without_5m_divergence(monkeypatch) -> None:

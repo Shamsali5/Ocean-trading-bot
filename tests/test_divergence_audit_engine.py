@@ -34,6 +34,8 @@ def _official_state(timeframe: str, direction: DivergenceDirection, c_end_index:
     return DivergenceState(
         timeframe=timeframe,
         exists=True,
+        abc_valid=True,
+        impulse_confirmed=True,
         direction=direction,
         grade=DivergenceGrade.STRONG,
         notes=f"c_end_index={c_end_index}",
@@ -114,6 +116,35 @@ def test_summary_prints_correct_per_timeframe_labels() -> None:
     assert "15m:Bearish" in summary
     assert "5m:No" in summary
     assert "3m:No" in summary
+
+
+def test_summary_never_prints_checkmark_when_abc_invalid() -> None:
+    audit = build_divergence_audit({}, {})
+    audit.tf_1h = DivergenceState(
+        timeframe="1h",
+        exists=True,
+        abc_valid=False,
+        impulse_confirmed=True,
+        direction=DivergenceDirection.BEARISH,
+    )
+    summary = divergence_audit_summary(audit)
+    assert "1H:Bearish✓" not in summary
+    assert "1H:Warning" in summary
+
+
+def test_selected_last_meaningful_ignores_non_official_exists_rows() -> None:
+    audit = build_divergence_audit({}, {})
+    audit.tf_1h = DivergenceState(
+        timeframe="1h",
+        exists=True,
+        abc_valid=False,
+        impulse_confirmed=True,
+        direction=DivergenceDirection.BEARISH,
+        notes="c_end_index=99",
+    )
+    audit.tf_15m = _official_state("15m", DivergenceDirection.BULLISH, c_end_index=10)
+    selected = select_last_meaningful_divergence(audit)
+    assert selected is audit.tf_15m
 
 
 def test_if_1h_and_15m_are_both_official_both_rows_remain_official() -> None:
