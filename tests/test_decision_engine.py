@@ -49,6 +49,32 @@ def _candidate(
     )
 
 
+def _type3_candidate(
+    *,
+    direction: Direction,
+    fresh_entry_valid: bool = False,
+    existing_hold_valid: bool = False,
+    carry_state: CarryState = CarryState.UNCLEAR,
+    too_late_to_chase: bool = False,
+    finished: bool = False,
+    origin_timeframe: str = "15m",
+    carry_timeframe: str = "5m",
+) -> ActiveTradeCandidate:
+    label = f"{origin_timeframe} {'Bullish' if direction == Direction.UP else 'Bearish'} Type 3"
+    return _candidate(
+        direction=direction,
+        fresh_entry_valid=fresh_entry_valid,
+        existing_hold_valid=existing_hold_valid,
+        carry_state=carry_state,
+        finished=finished,
+        too_late_to_chase=too_late_to_chase,
+        origin_timeframe=origin_timeframe,
+        carry_timeframe=carry_timeframe,
+        type_label=label,
+        setup_type=SetupType.TYPE_3,
+    )
+
+
 def _audit_with_selected(candidate: ActiveTradeCandidate) -> ActiveTradeAudit:
     audit = ActiveTradeAudit()
     field = {
@@ -257,3 +283,115 @@ def test_management_state_from_carry_values() -> None:
     assert management_state_from_carry(CarryState.MATURE) == "HOLD_WITH_CAUTION"
     assert management_state_from_carry(CarryState.EXHAUSTING) == "CLOSE_WATCH"
     assert management_state_from_carry(CarryState.UNCLEAR) == "NONE"
+
+
+def test_type3_fresh_bullish_is_buy() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+        too_late_to_chase=False,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="UNKNOWN")
+    assert decision.final_action == FinalAction.BUY
+    assert decision.reason == "Fresh entry is valid."
+
+
+def test_type3_fresh_bearish_is_sell() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.ACTIVE,
+        too_late_to_chase=False,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="UNKNOWN")
+    assert decision.final_action == FinalAction.SELL
+    assert decision.reason == "Fresh entry is valid."
+
+
+def test_type3_mature_bullish_long_mode_holds_long() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.MATURE,
+        too_late_to_chase=True,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="LONG")
+    assert decision.final_action == FinalAction.HOLD_LONG
+    assert decision.management_state == "HOLD_WITH_CAUTION"
+
+
+def test_type3_mature_bullish_flat_mode_waits() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.MATURE,
+        too_late_to_chase=True,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="FLAT")
+    assert decision.final_action == FinalAction.WAIT
+    assert "flat position mode waits" in decision.reason
+
+
+def test_type3_mature_bullish_unknown_mode_holds_with_hold_only_reason() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.MATURE,
+        too_late_to_chase=True,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="UNKNOWN")
+    assert decision.final_action == FinalAction.HOLD_LONG
+    assert "valid hold only, not fresh entry" in decision.reason.lower()
+
+
+def test_type3_mature_bearish_short_mode_holds_short() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.MATURE,
+        too_late_to_chase=True,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="SHORT")
+    assert decision.final_action == FinalAction.HOLD_SHORT
+    assert decision.management_state == "HOLD_WITH_CAUTION"
+
+
+def test_type3_mature_bearish_flat_mode_waits() -> None:
+    candidate = _type3_candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.MATURE,
+        too_late_to_chase=True,
+    )
+    decision = initial_decision_from_active_trade(candidate, position_mode="FLAT")
+    assert decision.final_action == FinalAction.WAIT
+    assert "flat position mode waits" in decision.reason
+
+
+def test_reason_separates_fresh_entry_from_valid_hold_only() -> None:
+    fresh_candidate = _type3_candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+        too_late_to_chase=False,
+    )
+    hold_candidate = _type3_candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=False,
+        existing_hold_valid=True,
+        carry_state=CarryState.MATURE,
+        too_late_to_chase=True,
+    )
+    fresh_decision = initial_decision_from_active_trade(fresh_candidate, position_mode="UNKNOWN")
+    hold_decision = initial_decision_from_active_trade(hold_candidate, position_mode="UNKNOWN")
+    assert fresh_decision.reason == "Fresh entry is valid."
+    assert "valid hold only, not fresh entry" in hold_decision.reason.lower()

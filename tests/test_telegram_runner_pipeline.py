@@ -63,6 +63,7 @@ def _config(tmp_path: Path) -> OceanConfig:
         vacc_smooth=5,
         telegram_mode="compact",
         run_every_half_hour=False,
+        position_mode="UNKNOWN",
     )
 
 

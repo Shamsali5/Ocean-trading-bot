@@ -42,9 +42,21 @@ def management_state_from_carry(carry_state: CarryState) -> str:
     return "NONE"
 
 
-def initial_decision_from_active_trade(active_trade: ActiveTradeCandidate) -> DecisionState:
+def _normalize_position_mode(position_mode: str) -> str:
+    normalized = position_mode.strip().upper()
+    if normalized in {"UNKNOWN", "FLAT", "LONG", "SHORT"}:
+        return normalized
+    return "UNKNOWN"
+
+
+def initial_decision_from_active_trade(
+    active_trade: ActiveTradeCandidate,
+    *,
+    position_mode: str = "UNKNOWN",
+) -> DecisionState:
     """Create initial deterministic decision prior to hard guard pass."""
 
+    resolved_position_mode = _normalize_position_mode(position_mode)
     decision = DecisionState(symbol="", final_action=FinalAction.WAIT, management_state="NONE")
     decision.active_trade_label = active_trade.type_label
     decision.carrying_timeframe = active_trade.carry_timeframe
@@ -85,6 +97,37 @@ def initial_decision_from_active_trade(active_trade: ActiveTradeCandidate) -> De
         decision.action = decision.final_action
         return decision
 
+    if active_trade.existing_hold_valid and active_trade.too_late_to_chase:
+        if resolved_position_mode == "FLAT":
+            decision.final_action = FinalAction.WAIT
+            decision.reason = "Valid hold only, not fresh entry; flat position mode waits."
+        elif active_trade.direction == Direction.UP:
+            if resolved_position_mode in {"LONG", "UNKNOWN"}:
+                decision.final_action = FinalAction.HOLD_LONG
+                if resolved_position_mode == "UNKNOWN":
+                    decision.reason = "Valid hold only, not fresh entry."
+                else:
+                    decision.reason = "Existing long hold remains valid."
+            else:
+                decision.final_action = FinalAction.WAIT
+                decision.reason = "Position mode does not permit bullish hold."
+        elif active_trade.direction == Direction.DOWN:
+            if resolved_position_mode in {"SHORT", "UNKNOWN"}:
+                decision.final_action = FinalAction.HOLD_SHORT
+                if resolved_position_mode == "UNKNOWN":
+                    decision.reason = "Valid hold only, not fresh entry."
+                else:
+                    decision.reason = "Existing short hold remains valid."
+            else:
+                decision.final_action = FinalAction.WAIT
+                decision.reason = "Position mode does not permit bearish hold."
+        else:
+            decision.final_action = FinalAction.WAIT
+            decision.reason = "Valid hold exists but direction is unclear."
+        decision.management_state = management_state_from_carry(active_trade.carry_state)
+        decision.action = decision.final_action
+        return decision
+
     if active_trade.existing_hold_valid:
         if active_trade.direction == Direction.UP:
             decision.final_action = FinalAction.HOLD_LONG
@@ -110,11 +153,12 @@ def build_decision_state(
     active_trade_audit: ActiveTradeAudit,
     multi_level_story: MultiLevelStory | None,
     zones: list[SupplyDemandZone] | None = None,
+    position_mode: str = "UNKNOWN",
 ) -> DecisionState:
     """Build final decision state and apply hard safety guards."""
 
     selected = selected_active_trade_or_default(active_trade_audit)
-    decision = initial_decision_from_active_trade(selected)
+    decision = initial_decision_from_active_trade(selected, position_mode=position_mode)
 
     if multi_level_story is not None:
         decision.controlling_origin = multi_level_story.controlling_origin

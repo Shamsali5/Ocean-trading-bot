@@ -14,12 +14,22 @@ DEFAULT_LIMITS: dict[str, int] = {
     "1h": 300,
     "4h": 240,
 }
+POSITION_MODES = {"UNKNOWN", "FLAT", "LONG", "SHORT"}
 
 
 def _parse_csv(value: str) -> list[str]:
     """Split comma-separated values while dropping blank items."""
 
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _normalize_position_mode(value: str) -> str:
+    """Normalize position mode into one of the allowed enum-like strings."""
+
+    mode = value.strip().upper()
+    if mode in POSITION_MODES:
+        return mode
+    return "UNKNOWN"
 
 
 @dataclass(slots=True)
@@ -57,6 +67,7 @@ class EngineConfig:
     candle_limits: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_LIMITS))
     vacc: VAccConfig = field(default_factory=VAccConfig)
     swing: SwingConfig = field(default_factory=SwingConfig)
+    position_mode: str = "UNKNOWN"
 
 
 @dataclass(slots=True)
@@ -72,6 +83,7 @@ class OceanConfig:
     vacc_smooth: int
     telegram_mode: str
     run_every_half_hour: bool
+    position_mode: str
 
 
 def from_env() -> EngineConfig:
@@ -85,6 +97,7 @@ def from_env() -> EngineConfig:
     results_dir = Path(os.getenv("OCEAN_RESULTS_DIR", "analysis_results"))
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    position_mode = _normalize_position_mode(os.getenv("OCEAN_POSITION_MODE", "UNKNOWN"))
 
     return EngineConfig(
         symbols=symbols,
@@ -95,6 +108,7 @@ def from_env() -> EngineConfig:
         results_dir=results_dir,
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
+        position_mode=position_mode,
     )
 
 
@@ -116,4 +130,5 @@ def load_config() -> OceanConfig:
         vacc_smooth=engine.vacc.smooth,
         telegram_mode=engine.telegram_mode,
         run_every_half_hour=engine.run_every_half_hour,
+        position_mode=engine.position_mode,
     )

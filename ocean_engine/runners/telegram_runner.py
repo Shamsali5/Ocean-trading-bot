@@ -77,6 +77,7 @@ def build_market_report(
         active_trade_audit=active_trade_audit,
         multi_level_story=multi_level_story,
         zones=zones,
+        position_mode=config.position_mode,
     )
 
     selected = _selected_active_trade(active_trade_audit)
