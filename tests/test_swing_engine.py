@@ -65,7 +65,7 @@ def test_ignores_incomplete_edge_windows() -> None:
 def test_duplicate_highs_keep_only_higher_high() -> None:
     candles = _make_candles(
         highs=[1.0, 2.0, 7.0, 2.0, 8.0, 2.0, 1.0],
-        lows=[0.5, 1.0, 2.0, 1.0, 2.0, 1.0, 0.5],
+        lows=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
     )
     swings = detect_swings(candles, pivot_left=1, pivot_right=1)
 
@@ -77,15 +77,15 @@ def test_duplicate_highs_keep_only_higher_high() -> None:
 
 def test_duplicate_lows_keep_only_lower_low() -> None:
     candles = _make_candles(
-        highs=[3.0, 2.0, 3.0, 2.0, 3.0, 2.0, 3.0],
-        lows=[2.0, 1.0, 2.0, 0.5, 2.0, 1.0, 2.0],
+        highs=[5.0, 4.0, 3.0, 2.0, 1.0, 0.9, 0.8],
+        lows=[2.0, 1.0, 0.2, 0.6, 0.1, 0.8, 1.0],
     )
     swings = detect_swings(candles, pivot_left=1, pivot_right=1)
 
     assert len(swings) == 1
     assert swings[0].direction == Direction.DOWN
-    assert swings[0].index == 3
-    assert swings[0].price == 0.5
+    assert swings[0].index == 4
+    assert swings[0].price == 0.1
 
 
 def test_detect_swings_enforces_alternating_sequence() -> None:
