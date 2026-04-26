@@ -917,6 +917,37 @@ def select_locked_active_trade(audit: dict[str, Any]) -> dict[str, Any]:
     return default_active_trade_row("N/A")
 
 
+def selected_active_trade_key(audit: dict[str, Any]) -> str | None:
+    selected = text(audit.get("selected_active_trade_tf"), "none").lower()
+    if selected in TF_AUDIT_KEYS and is_active_trade_row(audit[selected]):
+        return selected
+    return None
+
+
+def active_trade_carry_state(active_trade: dict[str, Any], carry: dict[str, Any]) -> str:
+    row_state = text(active_trade.get("carry_state"), "UNCLEAR").upper()
+    if row_state != "UNCLEAR":
+        return row_state
+    return text(carry.get("state"), "UNCLEAR").upper()
+
+
+def active_trade_has_same_tf_type1_divergence(
+    active_trade: dict[str, Any],
+    active_trade_key: str | None,
+    divergence_audit: dict[str, Any],
+) -> bool:
+    if text(active_trade.get("setup_type")).upper() != "TYPE_1":
+        return True
+    if active_trade_key not in TF_AUDIT_KEYS:
+        return False
+
+    div_row = divergence_audit.get(active_trade_key, {})
+    return (
+        is_official_divergence(div_row)
+        and text(div_row.get("direction")).upper() == text(active_trade.get("direction")).upper()
+    )
+
+
 def active_trade_audit_summary(audit: dict[str, Any]) -> str:
     parts: list[str] = []
     for key in TF_AUDIT_KEYS:
@@ -1101,6 +1132,7 @@ def normalize_analysis(result: dict[str, Any], symbol: str, ts_utc: str, current
     # Normalize active trade audit and lock trade_classification to selected origin timeframe.
     # Active trade TF = setup origin timeframe. Carry TF remains separate.
     result["active_trade_audit"] = normalize_active_trade_audit(result.get("active_trade_audit"))
+    active_trade_key = selected_active_trade_key(result["active_trade_audit"])
     active_trade = select_locked_active_trade(result["active_trade_audit"])
     if is_active_trade_row(active_trade):
         result["trade_classification"] = trade_classification_from_active_row(active_trade)
@@ -1162,22 +1194,41 @@ def normalize_analysis(result: dict[str, Any], symbol: str, ts_utc: str, current
         pm["if_not_in"] = "WAIT"
         result["one_line_reason"] = "WAIT because price is inside active higher-timeframe range midpoint; fresh directional action is invalid."
 
-    # Hard guard B: exhausting carry blocks fresh BUY/SELL.
+    # Hard guard B: fresh BUY/SELL requires a locked active trade, fresh-entry permission, and Fresh/Active carry.
+    if result.get("final_action") in {"BUY", "SELL"}:
+        carry_state = active_trade_carry_state(active_trade, carry)
+        if text(tc.get("active_trade_exists")).upper() != "YES":
+            result["final_action"] = "WAIT"
+            result["management_state"] = "NONE"
+            pm["if_not_in"] = "WAIT"
+            result["one_line_reason"] = "WAIT because fresh entry requires a timeframe-owned active trade origin."
+        elif text(tc.get("fresh_entry_valid")).upper() != "YES":
+            result["final_action"] = "WAIT"
+            result["management_state"] = "NONE"
+            pm["if_not_in"] = "WAIT"
+            result["one_line_reason"] = "WAIT because the selected active trade is not marked valid for fresh entry."
+        elif carry_state not in {"FRESH", "ACTIVE"}:
+            result["final_action"] = "WAIT"
+            result["management_state"] = "NONE"
+            pm["if_not_in"] = "WAIT"
+            result["one_line_reason"] = "WAIT because fresh entry requires Fresh or Active carry."
+
+    # Hard guard C: exhausting carry blocks fresh BUY/SELL even if the selected row omitted carry_state.
     if text(carry.get("state")).upper() == "EXHAUSTING" and result.get("final_action") in {"BUY", "SELL"}:
         result["final_action"] = "WAIT"
         result["management_state"] = "NONE"
         pm["if_not_in"] = "WAIT"
         result["one_line_reason"] = "WAIT because carry is already exhausting; fresh entry is invalid."
 
-    # Hard guard C: Type 1 fresh entry must have ABC and impulse.
+    # Hard guard D: Type 1 fresh entry must have same-timeframe official divergence.
     if result.get("final_action") in {"BUY", "SELL"} and "TYPE 1" in text(tc.get("type_label")).upper():
-        if text(div.get("abc_valid")).upper() != "YES" or text(div.get("impulse_confirmed")).upper() != "YES":
+        if not active_trade_has_same_tf_type1_divergence(active_trade, active_trade_key, result["divergence_audit"]):
             result["final_action"] = "WAIT"
             result["management_state"] = "NONE"
             pm["if_not_in"] = "WAIT"
-            result["one_line_reason"] = "WAIT because Type 1 requires valid A-B-C divergence plus confirmed impulse."
+            result["one_line_reason"] = "WAIT because Type 1 requires official same-timeframe A-B-C divergence plus confirmed impulse."
 
-    # Hard guard D: HOLD requires a locked active trade origin.
+    # Hard guard E: HOLD requires a locked active trade origin.
     if result.get("final_action") in {"HOLD LONG", "HOLD SHORT"} and text(tc.get("active_trade_exists")).upper() != "YES":
         result["final_action"] = "WAIT"
         result["management_state"] = "NONE"
@@ -1186,7 +1237,7 @@ def normalize_analysis(result: dict[str, Any], symbol: str, ts_utc: str, current
         result["one_line_reason"] = "WAIT because no timeframe-owned active trade origin was selected from the active trade audit."
 
 
-    # Hard guard E: multi-level active story requires at least two independently official same-direction divergence rows.
+    # Hard guard F: multi-level active story requires at least two independently official same-direction divergence rows.
     ml_story = result.get("multi_level_story", {})
     if text(ml_story.get("active")).upper() == "YES" and len(ml_story.get("confirmed_timeframes", [])) < 2:
         ml_story["active"] = "NO"
