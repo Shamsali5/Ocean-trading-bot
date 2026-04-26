@@ -202,6 +202,10 @@ def format_active_trade(active_trade_audit: ActiveTradeAudit | None) -> str:
     else:
         setup = _format_enum_value(getattr(selected, "setup_type", "N/A"))
         function = _format_enum_value(getattr(selected, "trade_function", "N/A"))
+        start_price_time = _format_price_time(
+            price=getattr(selected, "confirmation_price", None),
+            timestamp=getattr(selected, "confirmation_time_utc", ""),
+        )
         fresh = "YES" if getattr(selected, "fresh_entry_valid", False) else "NO"
         hold = "YES" if getattr(selected, "existing_hold_valid", False) else "NO"
         too_late = "YES" if getattr(selected, "too_late_to_chase", False) else "NO"
@@ -212,6 +216,7 @@ def format_active_trade(active_trade_audit: ActiveTradeAudit | None) -> str:
             f"Type: {setup}\n"
             f"Label: {_text(getattr(selected, 'type_label', 'N/A'))}\n"
             f"Function: {function}\n"
+            f"Start Price/Time: {start_price_time}\n"
             f"Fresh Entry: {fresh}\n"
             f"Valid Hold: {hold}\n"
             f"Too Late: {too_late}"

@@ -215,12 +215,15 @@ def test_type3_report_displays_active_trade_yes() -> None:
     report.active_trade_audit.tf_15m.fresh_entry_valid = False
     report.active_trade_audit.tf_15m.existing_hold_valid = True
     report.active_trade_audit.tf_15m.too_late_to_chase = True
+    report.active_trade_audit.tf_15m.confirmation_price = 77550.25
+    report.active_trade_audit.tf_15m.confirmation_time_utc = "2026-04-26T10:15:00Z"
     text = format_compact_telegram_report(report)
     assert "Active Trade: YES" in text
     assert "Function: BREAKOUT" in text
     assert "Fresh Entry: NO" in text
     assert "Valid Hold: YES" in text
     assert "Too Late: YES" in text
+    assert "Start Price/Time: 77,550.25 @ 2026-04-26T10:15:00Z" in text
 
 
 def test_type2_report_displays_pullback_continuation() -> None:

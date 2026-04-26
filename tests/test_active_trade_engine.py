@@ -210,12 +210,41 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
 
 def test_bullish_range_breakout_creates_bullish_type3_candidate() -> None:
     structures = {"15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.6)}
+    structures["15m"].candles = [
+        Candle(open_time=0, open=99.8, high=100.2, low=99.6, close=99.9, volume=1.0, close_time=1000),
+        Candle(open_time=1, open=100.0, high=101.0, low=99.9, close=100.7, volume=1.0, close_time=2000),
+        Candle(open_time=2, open=100.7, high=101.8, low=100.5, close=101.6, volume=1.0, close_time=3000),
+    ]
+    structures["15m"].range_state.first_break_index = 2
     candidate = detect_type3_candidate(timeframe="15m", structures=structures)
     assert candidate.exists is True
     assert candidate.setup_type == SetupType.TYPE_3
     assert candidate.direction == DivergenceDirection.BULLISH
     assert candidate.type_label == "15m Bullish Type 3"
     assert candidate.trade_function == TradeFunction.BREAKOUT
+    assert candidate.confirmation_price == 100.5
+    assert candidate.confirmation_time_utc == "1970-01-01T00:00:03+00:00"
+
+
+def test_type1_candidate_uses_divergence_event_price_time_as_start() -> None:
+    structures = {"15m": _structure("15m"), "5m": _structure("5m")}
+    divergence = DivergenceState(
+        timeframe="15m",
+        exists=True,
+        abc_valid=True,
+        direction=DivergenceDirection.BULLISH,
+        grade=DivergenceGrade.STRONG,
+        impulse_confirmed=True,
+        divergence_price=100.2,
+        divergence_time_utc="2026-04-26T10:00:00Z",
+        impulse_price=101.4,
+        impulse_time_utc="2026-04-26T10:03:00Z",
+    )
+    divergence_audit = DivergenceAudit(tf_15m=divergence)
+    candidate = build_type1_candidate("15m", divergence, structures, divergence_audit)
+    assert candidate.exists is True
+    assert candidate.confirmation_price == 101.4
+    assert candidate.confirmation_time_utc == "2026-04-26T10:03:00Z"
 
 
 def test_bearish_range_breakdown_creates_bearish_type3_candidate() -> None:
