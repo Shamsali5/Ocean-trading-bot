@@ -8,6 +8,7 @@ from ocean_engine.structure.range_engine import (
     calculate_leg_overlap,
     classify_price_location,
     detect_range_from_legs,
+    detect_range_ownership,
 )
 
 
@@ -112,3 +113,60 @@ def test_selects_most_recent_valid_range_when_multiple_exist() -> None:
     assert state.start_index == 0
     assert state.end_index == 20
     assert state.leg_count == 4
+
+
+def test_pre_range_up_leg_gives_bullish_ownership() -> None:
+    legs = [
+        _leg(0, 4, 80.0, 100.0, direction=Direction.UP),
+        _leg(5, 9, 90.0, 120.0, direction=Direction.UP),
+        _leg(10, 14, 95.0, 115.0, direction=Direction.DOWN),
+        _leg(15, 19, 100.0, 118.0, direction=Direction.UP),
+    ]
+    state = detect_range_from_legs(legs, current_price=108.0, timeframe="1h", min_legs=3, max_legs=3)
+    assert state.is_range is True
+    assert state.ownership == Direction.UP
+    assert "preceding up leg" in state.ownership_reason.lower()
+
+
+def test_pre_range_down_leg_gives_bearish_ownership() -> None:
+    legs = [
+        _leg(0, 4, 100.0, 130.0, direction=Direction.DOWN),
+        _leg(5, 9, 90.0, 120.0, direction=Direction.UP),
+        _leg(10, 14, 95.0, 115.0, direction=Direction.DOWN),
+        _leg(15, 19, 100.0, 118.0, direction=Direction.UP),
+    ]
+    state = detect_range_from_legs(legs, current_price=108.0, timeframe="1h", min_legs=3, max_legs=3)
+    assert state.is_range is True
+    assert state.ownership == Direction.DOWN
+    assert "preceding down leg" in state.ownership_reason.lower()
+
+
+def test_unclear_pre_range_gives_unclear_ownership() -> None:
+    legs = [
+        _leg(5, 9, 90.0, 120.0, direction=Direction.UP),
+        _leg(10, 14, 95.0, 115.0, direction=Direction.DOWN),
+        _leg(15, 19, 100.0, 118.0, direction=Direction.UP),
+    ]
+    state = detect_range_from_legs(legs, current_price=108.0, timeframe="1h", min_legs=3, max_legs=3)
+    assert state.is_range is True
+    assert state.ownership == Direction.UNCLEAR
+    assert "no pre-range leg" in state.ownership_reason.lower()
+
+
+def test_range_summary_includes_ownership() -> None:
+    legs = [
+        _leg(0, 4, 80.0, 100.0, direction=Direction.UP),
+        _leg(5, 9, 90.0, 120.0, direction=Direction.UP),
+        _leg(10, 14, 95.0, 115.0, direction=Direction.DOWN),
+        _leg(15, 19, 100.0, 118.0, direction=Direction.UP),
+    ]
+    state = detect_range_from_legs(legs, current_price=108.0, timeframe="1h", min_legs=3, max_legs=3)
+    assert "ownership=" in state.summary.lower()
+    assert "up" in state.summary.lower()
+
+
+def test_detect_range_ownership_unclear_when_pre_leg_direction_unclear() -> None:
+    pre_leg = _leg(0, 4, 80.0, 100.0, direction=Direction.UNCLEAR)
+    ownership, reason = detect_range_ownership(ordered_legs=[pre_leg], range_start_index=5)
+    assert ownership == Direction.UNCLEAR
+    assert "direction is unclear" in reason.lower()

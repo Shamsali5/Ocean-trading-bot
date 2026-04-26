@@ -112,6 +112,8 @@ class RangeState:
     acceptance_confirmed: bool = False
     first_break_index: int | None = None
     first_accepted_close: float | None = None
+    ownership: Direction = Direction.UNCLEAR
+    ownership_reason: str = ""
     summary: str = ""
 
 

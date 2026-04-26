@@ -37,6 +37,39 @@ def classify_price_location(current_price: float, lower_edge: float, upper_edge:
     return "MID"
 
 
+def detect_range_ownership(
+    *,
+    ordered_legs: list[Leg],
+    range_start_index: int | None,
+) -> tuple[Direction, str]:
+    """Infer range ownership from the immediate pre-range leg direction."""
+
+    if range_start_index is None:
+        return (Direction.UNCLEAR, "Ownership unclear: missing range start index.")
+
+    previous_leg: Leg | None = None
+    for leg in ordered_legs:
+        if leg.end_index < range_start_index:
+            previous_leg = leg
+        else:
+            break
+
+    if previous_leg is None:
+        return (Direction.UNCLEAR, "Ownership unclear: no pre-range leg found.")
+
+    if previous_leg.direction == Direction.UP:
+        return (
+            Direction.UP,
+            "Bullish ownership: range was entered from an immediately preceding up leg.",
+        )
+    if previous_leg.direction == Direction.DOWN:
+        return (
+            Direction.DOWN,
+            "Bearish ownership: range was entered from an immediately preceding down leg.",
+        )
+    return (Direction.UNCLEAR, "Ownership unclear: pre-range leg direction is unclear.")
+
+
 def detect_breakout_acceptance(
     range_state: RangeState,
     candles: list[Candle],
@@ -227,6 +260,10 @@ def detect_range_from_legs(
         lower_edge=outer_lower_edge,
         upper_edge=outer_upper_edge,
     )
+    ownership, ownership_reason = detect_range_ownership(
+        ordered_legs=ordered,
+        range_start_index=best_window[0].start_index if best_window else None,
+    )
 
     return RangeState(
         timeframe=timeframe,
@@ -244,9 +281,12 @@ def detect_range_from_legs(
         leg_count=len(best_window),
         start_index=best_window[0].start_index,
         end_index=best_window[-1].end_index,
+        ownership=ownership,
+        ownership_reason=ownership_reason,
         summary=(
             f"Range detected with {len(best_window)} legs, "
-            f"ZD={pivot_low:.6f}, ZG={pivot_high:.6f}."
+            f"ZD={pivot_low:.6f}, ZG={pivot_high:.6f}. "
+            f"Ownership={ownership.value}."
         ),
     )
 

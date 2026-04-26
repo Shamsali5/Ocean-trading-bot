@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, FinalAction, SetupType
+from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, FinalAction, MarketState, SetupType
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
@@ -10,6 +10,7 @@ from ocean_engine.models.market import (
     DivergenceAudit,
     DivergenceState,
     MultiLevelStory,
+    RangeState,
     StructureState,
 )
 from ocean_engine.trade.decision_engine import (
@@ -395,3 +396,28 @@ def test_reason_separates_fresh_entry_from_valid_hold_only() -> None:
     hold_decision = initial_decision_from_active_trade(hold_candidate, position_mode="UNKNOWN")
     assert fresh_decision.reason == "Fresh entry is valid."
     assert "valid hold only, not fresh entry" in hold_decision.reason.lower()
+
+
+def test_range_ownership_does_not_create_buy_sell_by_itself() -> None:
+    structures = {
+        "15m": StructureState(
+            timeframe="15m",
+            direction=Direction.UNCLEAR,
+            market_state=MarketState.RANGE,
+            range_state=RangeState(
+                timeframe="15m",
+                is_range=True,
+                active=True,
+                ownership=Direction.UP,
+                ownership_reason="pre-range leg UP -> bullish ownership",
+            ),
+        )
+    }
+    decision = build_decision_state(
+        structures=structures,
+        divergence_audit=DivergenceAudit(),
+        active_trade_audit=ActiveTradeAudit(),
+        multi_level_story=MultiLevelStory(),
+    )
+    assert decision.final_action == FinalAction.WAIT
+    assert "No locked active trade origin exists." in decision.reason
