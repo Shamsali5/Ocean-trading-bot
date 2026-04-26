@@ -255,7 +255,7 @@ class MultiLevelStory:
     bias: Direction = Direction.UNCLEAR
     supporting_timeframes: list[str] = field(default_factory=list)
     active: bool = False
-    direction: str = "UNCLEAR"
+    direction: Direction = Direction.UNCLEAR
     confirmed_timeframes: list[str] = field(default_factory=list)
     controlling_origin: str = ""
     active_execution_trade: str = ""

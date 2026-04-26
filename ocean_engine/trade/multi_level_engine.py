@@ -39,8 +39,8 @@ def get_official_timeframes_by_direction(
     """Collect official rows by direction from divergence and trade audits."""
 
     grouped: dict[str, list[dict[str, str | ActiveTradeCandidate]]] = {
-        "bullish": [],
-        "bearish": [],
+        "BULLISH": [],
+        "BEARISH": [],
     }
 
     for tf in TIMEFRAME_ORDER:
@@ -51,7 +51,7 @@ def get_official_timeframes_by_direction(
             and divergence_row.impulse_confirmed
             and divergence_row.direction in (DivergenceDirection.BULLISH, DivergenceDirection.BEARISH)
         ):
-            key = "bullish" if divergence_row.direction == DivergenceDirection.BULLISH else "bearish"
+            key = "BULLISH" if divergence_row.direction == DivergenceDirection.BULLISH else "BEARISH"
             grouped[key].append(
                 {
                     "timeframe": tf,
@@ -68,7 +68,7 @@ def get_official_timeframes_by_direction(
             and trade_row.origin_timeframe == tf
             and trade_row.direction in (Direction.UP, Direction.DOWN)
         ):
-            direction_key = "bullish" if trade_row.direction == Direction.UP else "bearish"
+            direction_key = "BULLISH" if trade_row.direction == Direction.UP else "BEARISH"
             grouped[direction_key].append(
                 {
                     "timeframe": tf,
@@ -79,7 +79,7 @@ def get_official_timeframes_by_direction(
             )
 
     # Deduplicate per direction/timeframe by preferring trade rows over divergence rows.
-    for key in ("bullish", "bearish"):
+    for key in ("BULLISH", "BEARISH"):
         by_tf: dict[str, dict[str, str | ActiveTradeCandidate]] = {}
         for row in grouped[key]:
             tf = str(row["timeframe"])
@@ -100,15 +100,15 @@ def build_multi_level_story(
     """Build multi-level same-story context from official rows."""
 
     grouped = get_official_timeframes_by_direction(divergence_audit, active_trade_audit)
-    bullish_rows = grouped["bullish"]
-    bearish_rows = grouped["bearish"]
+    bullish_rows = grouped["BULLISH"]
+    bearish_rows = grouped["BEARISH"]
 
     if not bullish_rows and not bearish_rows:
         return MultiLevelStory(
             symbol="",
             primary_timeframe="",
             active=False,
-            direction="UNCLEAR",
+            direction=Direction.UNCLEAR,
             confirmed_timeframes=[],
             controlling_origin="",
             active_execution_trade="",
@@ -119,20 +119,20 @@ def build_multi_level_story(
         )
 
     if len(bullish_rows) > len(bearish_rows):
-        selected_direction = "bullish"
+        selected_direction = "BULLISH"
         rows = bullish_rows
     elif len(bearish_rows) > len(bullish_rows):
-        selected_direction = "bearish"
+        selected_direction = "BEARISH"
         rows = bearish_rows
     else:
         # Tie-break by highest timeframe presence.
         bullish_best = max((timeframe_rank(str(row["timeframe"])) for row in bullish_rows), default=0)
         bearish_best = max((timeframe_rank(str(row["timeframe"])) for row in bearish_rows), default=0)
         if bullish_best >= bearish_best:
-            selected_direction = "bullish"
+            selected_direction = "BULLISH"
             rows = bullish_rows
         else:
-            selected_direction = "bearish"
+            selected_direction = "BEARISH"
             rows = bearish_rows
 
     confirmed_timeframes = sorted({str(row["timeframe"]) for row in rows}, key=timeframe_rank, reverse=True)
@@ -153,7 +153,7 @@ def build_multi_level_story(
         if isinstance(candidate, ActiveTradeCandidate):
             carrying_timeframe = candidate.carry_timeframe
 
-    story_direction = Direction.UP if selected_direction == "bullish" else Direction.DOWN
+    story_direction = Direction.UP if selected_direction == "BULLISH" else Direction.DOWN
     explanation = (
         f"{selected_direction.title()} confirmation on {', '.join(normalize_tf_label(tf) for tf in confirmed_timeframes)}."
     )
@@ -168,7 +168,7 @@ def build_multi_level_story(
         bias=story_direction,
         supporting_timeframes=[tf for tf in confirmed_timeframes if tf != controlling_tf],
         active=active,
-        direction=selected_direction.upper(),
+        direction=story_direction,
         confirmed_timeframes=confirmed_timeframes,
         controlling_origin=controlling_origin,
         active_execution_trade=active_execution_trade,
@@ -214,9 +214,9 @@ def _choose_execution_row(
 
     if selected_trade is not None:
         selected_trade_direction = (
-            "bullish"
+            "BULLISH"
             if selected_trade.direction == Direction.UP
-            else "bearish"
+            else "BEARISH"
             if selected_trade.direction == Direction.DOWN
             else ""
         )
