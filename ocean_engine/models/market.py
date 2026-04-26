@@ -89,6 +89,17 @@ class RangeState:
     high: float | None = None
     low: float | None = None
     mid: float | None = None
+    active: bool = False
+    upper_edge: float | None = None
+    lower_edge: float | None = None
+    midpoint: float | None = None
+    pivot_low: float | None = None
+    pivot_high: float | None = None
+    price_location: str = "UNCLEAR"
+    leg_count: int = 0
+    start_index: int | None = None
+    end_index: int | None = None
+    summary: str = ""
 
 
 @dataclass(slots=True)
