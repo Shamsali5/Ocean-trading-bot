@@ -104,6 +104,14 @@ class RangeState:
     leg_count: int = 0
     start_index: int | None = None
     end_index: int | None = None
+    status: str = "UNCLEAR"
+    breakout_direction: Direction = Direction.UNCLEAR
+    breakout_level: float | None = None
+    breakout_confirmed: bool = False
+    retest_held: bool = False
+    acceptance_confirmed: bool = False
+    first_break_index: int | None = None
+    first_accepted_close: float | None = None
     summary: str = ""
 
 

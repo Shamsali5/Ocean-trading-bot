@@ -41,6 +41,7 @@ def analyze_structure(
     if current_price is not None:
         range_state = detect_range_from_legs(
             legs=legs,
+            candles=candles,
             current_price=current_price,
             timeframe=timeframe_data.timeframe,
             min_legs=range_min_legs,

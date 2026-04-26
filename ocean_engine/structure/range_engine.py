@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.market import Leg, RangeState
+from ocean_engine.models.enums import Direction
+from ocean_engine.models.market import Candle, Leg, RangeState
 
 
 def calculate_leg_overlap(legs: list[Leg]) -> tuple[float, float] | None:
@@ -36,9 +37,124 @@ def classify_price_location(current_price: float, lower_edge: float, upper_edge:
     return "MID"
 
 
+def detect_breakout_acceptance(
+    range_state: RangeState,
+    candles: list[Candle],
+    legs: list[Leg],
+    current_price: float,
+    lookback: int = 20,
+    retest_tolerance_pct: float = 0.0015,
+) -> RangeState:
+    """Classify breakout/acceptance status for an already-detected range."""
+
+    if (
+        not range_state.is_range
+        or range_state.upper_edge is None
+        or range_state.lower_edge is None
+        or not candles
+    ):
+        range_state.status = "UNCLEAR"
+        return range_state
+
+    if lookback < 3:
+        lookback = 3
+
+    closes = [candle.close for candle in candles[-lookback:]]
+    upper = range_state.upper_edge
+    lower = range_state.lower_edge
+    # Allow tolerance to scale both with range width and absolute boundary price.
+    tolerance = max(
+        abs(upper - lower) * retest_tolerance_pct,
+        abs(upper) * retest_tolerance_pct,
+        abs(lower) * retest_tolerance_pct,
+        1e-9,
+    )
+
+    above_indices = [idx for idx, close in enumerate(closes) if close > upper]
+    below_indices = [idx for idx, close in enumerate(closes) if close < lower]
+
+    def _failed_break_up(first_index: int) -> bool:
+        return any(close <= upper for close in closes[first_index + 1 :])
+
+    def _failed_break_down(first_index: int) -> bool:
+        return any(close >= lower for close in closes[first_index + 1 :])
+
+    def _retest_hold_up(first_index: int) -> bool:
+        for idx in range(first_index + 1, len(closes) - 1):
+            retest_close = closes[idx]
+            if upper <= retest_close <= (upper + tolerance):
+                if closes[idx + 1] > retest_close and closes[idx + 1] > upper:
+                    return True
+        return False
+
+    def _retest_hold_down(first_index: int) -> bool:
+        for idx in range(first_index + 1, len(closes) - 1):
+            retest_close = closes[idx]
+            if (lower - tolerance) <= retest_close <= lower:
+                if closes[idx + 1] < retest_close and closes[idx + 1] < lower:
+                    return True
+        return False
+
+    # Bullish break acceptance.
+    if above_indices:
+        first = above_indices[0]
+        range_state.breakout_direction = Direction.UP
+        range_state.breakout_level = upper
+        range_state.breakout_confirmed = True
+        range_state.first_break_index = len(candles) - len(closes) + first
+        range_state.first_accepted_close = closes[first]
+
+        if _failed_break_up(first):
+            range_state.status = "FAILED_BREAK_UP"
+            range_state.acceptance_confirmed = False
+            range_state.retest_held = False
+            return range_state
+
+        retest_hold = _retest_hold_up(first)
+        range_state.retest_held = retest_hold
+        acceptance_two_closes = len(above_indices) >= 2
+        range_state.acceptance_confirmed = acceptance_two_closes or retest_hold
+        range_state.status = "BROKEN_UP" if range_state.acceptance_confirmed else "UNCLEAR"
+        return range_state
+
+    # Bearish break acceptance.
+    if below_indices:
+        first = below_indices[0]
+        range_state.breakout_direction = Direction.DOWN
+        range_state.breakout_level = lower
+        range_state.breakout_confirmed = True
+        range_state.first_break_index = len(candles) - len(closes) + first
+        range_state.first_accepted_close = closes[first]
+
+        if _failed_break_down(first):
+            range_state.status = "FAILED_BREAK_DOWN"
+            range_state.acceptance_confirmed = False
+            range_state.retest_held = False
+            return range_state
+
+        retest_hold = _retest_hold_down(first)
+        range_state.retest_held = retest_hold
+        acceptance_two_closes = len(below_indices) >= 2
+        range_state.acceptance_confirmed = acceptance_two_closes or retest_hold
+        range_state.status = "BROKEN_DOWN" if range_state.acceptance_confirmed else "UNCLEAR"
+        return range_state
+
+    # No confirmed close outside: range stays active.
+    range_state.status = "ACTIVE"
+    range_state.breakout_direction = Direction.UNCLEAR
+    range_state.breakout_level = None
+    range_state.breakout_confirmed = False
+    range_state.retest_held = False
+    range_state.acceptance_confirmed = False
+    range_state.first_break_index = None
+    range_state.first_accepted_close = None
+    return range_state
+
+
 def detect_range_from_legs(
     legs: list[Leg],
     current_price: float,
+    candles: list[Candle] | None = None,
     timeframe: str = "",
     min_legs: int = 3,
     max_legs: int = 8,
@@ -133,3 +249,4 @@ def detect_range_from_legs(
             f"ZD={pivot_low:.6f}, ZG={pivot_high:.6f}."
         ),
     )
+
