@@ -108,7 +108,7 @@ def build_market_report(
     vacc_map = build_vacc_map(ordered_market_data, config.vacc_period, config.vacc_smooth)
     divergence_audit = build_divergence_audit(structures, vacc_map, trace=trace)
     zones = detect_supply_demand_zones(structures, divergence_audit)
-    active_trade_audit = build_active_trade_audit(structures, divergence_audit)
+    active_trade_audit = build_active_trade_audit(structures, divergence_audit, trace=trace)
     multi_level_story = build_multi_level_story(divergence_audit, active_trade_audit)
     story_state = build_story_state(
         structures=structures,

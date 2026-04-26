@@ -11,6 +11,7 @@ from ocean_engine.models.market import (
     RangeState,
     StructureState,
 )
+from ocean_carry_engine import assign_carry_timeframe, classify_carry_state as strict_classify_carry_state
 from ocean_engine.trade.carry_engine import (
     build_carry_status,
     classify_carry_state,
@@ -69,6 +70,14 @@ def test_15m_origin_maps_to_5m_carry() -> None:
     assert get_carry_timeframe("15m") == "5m"
 
 
+def test_assign_carry_timeframe_4h_maps_to_1h() -> None:
+    assert assign_carry_timeframe("4h") == "1h"
+
+
+def test_assign_carry_timeframe_5m_maps_to_3m() -> None:
+    assert assign_carry_timeframe("5m") == "3m"
+
+
 def test_bullish_origin_maps_to_up_carry() -> None:
     assert direction_from_divergence(DivergenceDirection.BULLISH) == Direction.UP
 
@@ -99,12 +108,13 @@ def test_opposite_divergence_with_impulse_gives_exhausting_and_finished_true() -
     carry_div = _divergence_state("15m", DivergenceDirection.BEARISH, exists=True, impulse=True)
     state = classify_carry_state(structure, Direction.UP, carry_div)
     assert state == CarryState.EXHAUSTING
-    assert is_carry_finished(carry_div, Direction.UP) is True
+    assert is_carry_finished(carry_div, Direction.UP, continuation_failed=False) is False
+    assert is_carry_finished(carry_div, Direction.UP, continuation_failed=True) is True
 
 
 def test_opposite_divergence_without_impulse_does_not_finish_carry() -> None:
     carry_div = _divergence_state("15m", DivergenceDirection.BEARISH, exists=True, impulse=False)
-    assert is_carry_finished(carry_div, Direction.UP) is False
+    assert is_carry_finished(carry_div, Direction.UP, continuation_failed=True) is False
 
 
 def test_opposite_divergence_with_impulse_but_non_official_does_not_finish_carry() -> None:
@@ -115,7 +125,7 @@ def test_opposite_divergence_with_impulse_but_non_official_does_not_finish_carry
         impulse=True,
         abc_valid=False,
     )
-    assert is_carry_finished(carry_div, Direction.UP) is False
+    assert is_carry_finished(carry_div, Direction.UP, continuation_failed=True) is False
 
 
 def test_build_carry_status_uses_only_carry_timeframe_divergence_row() -> None:
@@ -137,3 +147,30 @@ def test_build_carry_status_uses_only_carry_timeframe_divergence_row() -> None:
     assert status.opposite_divergence is False
     assert status.opposite_impulse is False
     assert status.finished is False
+
+
+def test_strict_carry_result_requires_three_signals_for_finish() -> None:
+    structure = _structure("15m", active_leg=_active_leg(Direction.UP), range_active=False)
+    result = strict_classify_carry_state(
+        origin_timeframe="1h",
+        direction=Direction.UP,
+        lower_tf_context=structure,
+        opposite_divergence_result=True,
+        opposite_impulse_result=True,
+    )
+    assert result.carry_finished is False
+    assert result.state == "EXHAUSTING"
+
+
+def test_strict_carry_result_finishes_only_with_opposite_and_failure() -> None:
+    structure = _structure("15m", active_leg=_active_leg(Direction.DOWN), range_active=False)
+    result = strict_classify_carry_state(
+        origin_timeframe="1h",
+        direction=Direction.UP,
+        lower_tf_context=structure,
+        opposite_divergence_result=True,
+        opposite_impulse_result=True,
+    )
+    assert result.carry_finished is True
+    assert result.state == "EXHAUSTING"
+    assert result.required_lower_cycle_complete == "YES"

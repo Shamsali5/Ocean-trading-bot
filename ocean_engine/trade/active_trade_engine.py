@@ -16,6 +16,7 @@ from ocean_engine.models.market import (
     SupplyDemandZone,
 )
 from ocean_engine.trade.carry_engine import build_carry_status, get_carry_timeframe
+from ocean_framework_v12_audit import FrameworkAuditTrace
 from ocean_engine.zones.supply_demand_engine import detect_supply_demand_zones
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
@@ -46,6 +47,7 @@ def build_type1_candidate(
     divergence: DivergenceState,
     structures: dict[str, StructureState],
     divergence_audit: DivergenceAudit,
+    trace: FrameworkAuditTrace | None = None,
 ) -> ActiveTradeCandidate:
     """Build a Type 1 candidate from one official same-timeframe divergence."""
 
@@ -62,6 +64,7 @@ def build_type1_candidate(
         origin_direction=divergence.direction,
         structures=structures,
         divergence_audit=divergence_audit,
+        trace=trace,
     )
     carry_identifiable = carry.timeframe is not None and carry.timeframe != ""
     if not carry_identifiable:
@@ -640,6 +643,7 @@ def detect_upgrade_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
 def build_active_trade_audit(
     structures: dict[str, StructureState],
     divergence_audit: DivergenceAudit,
+    trace: FrameworkAuditTrace | None = None,
 ) -> ActiveTradeAudit:
     """Build active trade candidate rows per timeframe."""
 
@@ -652,6 +656,7 @@ def build_active_trade_audit(
             divergence=divergence,
             structures=structures,
             divergence_audit=divergence_audit,
+            trace=trace,
         )
         type2_candidate = detect_type2_candidate(
             timeframe=timeframe,
