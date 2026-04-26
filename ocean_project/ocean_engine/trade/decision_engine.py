@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, FinalAction
+from ocean_entry_gate import evaluate_fresh_entry
+from ocean_engine.models.enums import CarryState, Direction, FinalAction, SetupType
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
@@ -173,6 +174,7 @@ def build_decision_state(
     zones: list[SupplyDemandZone] | None = None,
     position_mode: str = "UNKNOWN",
     move_context: MoveContext | None = None,
+    trace=None,
 ) -> DecisionState:
     """Build final decision state and apply hard safety guards."""
 
@@ -202,6 +204,90 @@ def build_decision_state(
         decision.action = FinalAction.WAIT
         decision.management_state = "NONE"
         decision.reason = "Parent/current move separation unclear; framework v1.2 requires current move origin for fresh entry."
+
+    if decision.final_action in {FinalAction.BUY, FinalAction.SELL}:
+        selected_direction = _candidate_direction(selected)
+        gate_side = (
+            "BUY"
+            if selected_direction == Direction.UP
+            else "SELL"
+            if selected_direction == Direction.DOWN
+            else None
+        )
+        origin_field_map = {
+            "4h": "tf_4h",
+            "1h": "tf_1h",
+            "15m": "tf_15m",
+            "5m": "tf_5m",
+            "3m": "tf_3m",
+        }
+        origin_field = origin_field_map.get(selected.origin_timeframe or "")
+        divergence_row = getattr(divergence_audit, origin_field, None) if origin_field else None
+        range_row = structures.get(selected.origin_timeframe).range_state if selected.origin_timeframe in structures else None
+        entry_decision = evaluate_fresh_entry(
+            move_context=move_context,
+            type_classification={
+                "type_label": selected.setup_type.value if selected.setup_type is not None else "NONE",
+                "full_label": selected.type_label,
+                "valid": bool(selected.exists and selected.setup_type in {SetupType.TYPE_1, SetupType.TYPE_2, SetupType.TYPE_3}),
+                "origin_timeframe": selected.origin_timeframe,
+                "direction": (
+                    "BULLISH"
+                    if selected_direction == Direction.UP
+                    else "BEARISH"
+                    if selected_direction == Direction.DOWN
+                    else "NONE"
+                ),
+                "invalidation": selected.invalidation,
+            },
+            trade_function_result={
+                "trade_function": (
+                    selected.trade_function.value
+                    if hasattr(selected.trade_function, "value")
+                    else str(selected.trade_function)
+                ),
+                "valid": bool(
+                    selected.trade_function is not None
+                    and str(getattr(selected.trade_function, "value", selected.trade_function)).upper() != "NONE"
+                ),
+            },
+            impulse_result={
+                "confirmed": bool(
+                    selected.confirmation_price is not None
+                    and (
+                        divergence_row is None
+                        or bool(getattr(divergence_row, "impulse_confirmed", False))
+                    )
+                ),
+                "acceptance_valid": bool(selected.setup_type == SetupType.TYPE_3),
+            },
+            carry_result={
+                "state": selected.carry_state.value if hasattr(selected.carry_state, "value") else str(selected.carry_state),
+                "timeframe": selected.carry_timeframe,
+                "finished": selected.current_status.upper() == "FINISHED",
+                "exhausting": selected.carry_state == CarryState.EXHAUSTING,
+            },
+            range_result=range_row,
+            zone_results=zones or [],
+            multi_level_result=multi_level_story,
+            trace=trace,
+        )
+        if not entry_decision.fresh_entry_valid or entry_decision.side not in {"BUY", "SELL"}:
+            decision.final_action = FinalAction.WAIT
+            decision.action = FinalAction.WAIT
+            decision.management_state = "NONE"
+            decision.reason = entry_decision.reason
+            decision.fresh_entry_valid = False
+            if entry_decision.reason and entry_decision.reason not in decision.guard_reasons:
+                decision.guard_reasons.append(entry_decision.reason)
+        elif gate_side is not None and entry_decision.side != gate_side:
+            decision.final_action = FinalAction.WAIT
+            decision.action = FinalAction.WAIT
+            decision.management_state = "NONE"
+            decision.reason = "Entry gate side mismatch with active trade direction."
+            decision.fresh_entry_valid = False
+            if decision.reason not in decision.guard_reasons:
+                decision.guard_reasons.append(decision.reason)
 
     guarded = apply_decision_guards(
         decision=decision,

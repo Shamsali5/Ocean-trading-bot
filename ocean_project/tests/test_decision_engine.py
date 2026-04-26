@@ -442,6 +442,138 @@ def test_type3_divergence_direction_is_normalized_to_buy_sell() -> None:
     assert decision.final_action == FinalAction.BUY
 
 
+def test_build_decision_state_zone_touch_without_structure_confirmation_forces_wait() -> None:
+    candidate = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+        type_label="15m Bullish Type 1",
+        setup_type=SetupType.TYPE_1,
+    )
+    audit = _audit_with_selected(candidate)
+    divergence_audit = DivergenceAudit(
+        tf_15m=DivergenceState(
+            timeframe="15m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=True,
+            direction=DivergenceDirection.BULLISH,
+        )
+    )
+    zones = [
+        {
+            "timeframe": "15m",
+            "zone_type": "DEMAND",
+            "status": "REACTING",
+            "structure_confirmed": False,
+            "impulse_confirmed": False,
+            "supports_trade": False,
+        }
+    ]
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=divergence_audit,
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(
+            valid=True,
+            controlling_origin="15m Bullish Type 1",
+            active_execution_trade="15m Bullish Type 1",
+            carrying_timeframe="5m",
+        ),
+        zones=zones,
+        move_context=MoveContext(
+            current_timeframe="15m",
+            current_origin="DIVERGENCE",
+        ),
+    )
+    assert decision.final_action == FinalAction.WAIT
+    assert "Zone exists but no structural confirmation." in decision.reason
+
+
+def test_build_decision_state_type1_without_impulse_forces_wait() -> None:
+    candidate = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+        type_label="15m Bullish Type 1",
+        setup_type=SetupType.TYPE_1,
+    )
+    candidate.confirmation_price = None
+    audit = _audit_with_selected(candidate)
+    divergence_audit = DivergenceAudit(
+        tf_15m=DivergenceState(
+            timeframe="15m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=False,
+            direction=DivergenceDirection.BULLISH,
+        )
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=divergence_audit,
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(
+            valid=True,
+            controlling_origin="15m Bullish Type 1",
+            active_execution_trade="15m Bullish Type 1",
+            carrying_timeframe="5m",
+        ),
+        move_context=MoveContext(
+            current_timeframe="15m",
+            current_origin="DIVERGENCE",
+        ),
+    )
+    assert decision.final_action == FinalAction.WAIT
+    assert "No impulse blocks entry." in decision.reason
+
+
+def test_build_decision_state_exhausting_carry_forces_wait() -> None:
+    candidate = _candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.EXHAUSTING,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+        type_label="15m Bearish Type 1",
+        setup_type=SetupType.TYPE_1,
+    )
+    audit = _audit_with_selected(candidate)
+    divergence_audit = DivergenceAudit(
+        tf_15m=DivergenceState(
+            timeframe="15m",
+            exists=True,
+            abc_valid=True,
+            impulse_confirmed=True,
+            direction=DivergenceDirection.BEARISH,
+        )
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=divergence_audit,
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(
+            valid=True,
+            controlling_origin="15m Bearish Type 1",
+            active_execution_trade="15m Bearish Type 1",
+            carrying_timeframe="5m",
+        ),
+        move_context=MoveContext(
+            current_timeframe="15m",
+            current_origin="DIVERGENCE",
+        ),
+    )
+    assert decision.final_action == FinalAction.WAIT
+    assert "carry exhausting" in decision.reason.lower()
+
+
 def test_close_and_flip_when_selected_finished_and_opposite_fresh_exists() -> None:
     selected = _candidate(
         direction=Direction.UP,
