@@ -83,6 +83,25 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
     assert candidate.type_label.startswith("1H")
 
 
+def test_type1_candidate_not_created_from_non_official_divergence(monkeypatch) -> None:
+    structures = {"1h": _structure("1h"), "15m": _structure("15m")}
+    non_official = DivergenceState(
+        timeframe="1h",
+        exists=True,
+        abc_valid=False,
+        impulse_confirmed=True,
+        direction=DivergenceDirection.BEARISH,
+        grade=DivergenceGrade.MODERATE,
+    )
+    divergence_audit = DivergenceAudit(tf_1h=non_official)
+    monkeypatch.setattr(
+        "ocean_engine.trade.active_trade_engine.build_carry_status",
+        lambda *args, **kwargs: CarryStatus(timeframe="15m", direction=Direction.DOWN, state=CarryState.ACTIVE, finished=False),
+    )
+    candidate = build_type1_candidate("1h", non_official, structures, divergence_audit)
+    assert candidate.exists is False
+
+
 def test_5m_carry_does_not_become_5m_type1_without_5m_divergence(monkeypatch) -> None:
     structures = {"15m": _structure("15m"), "5m": _structure("5m")}
     divergence_audit = DivergenceAudit(tf_15m=_official_divergence("15m", DivergenceDirection.BULLISH))

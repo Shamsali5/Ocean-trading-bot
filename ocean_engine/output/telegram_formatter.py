@@ -5,7 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from ocean_engine.divergence.divergence_audit import divergence_audit_summary
+from ocean_engine.divergence.divergence_audit import (
+    divergence_audit_summary,
+    is_official_divergence,
+    select_last_meaningful_divergence,
+)
 from ocean_engine.models.enums import FinalAction
 from ocean_engine.models.market import (
     ActiveTradeAudit,
@@ -53,14 +57,25 @@ def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
         return "Audit: N/A\nLast Meaningful: N/A\nABC: N/A\nImpulse: N/A\nGrade: N/A"
 
     audit_line = divergence_audit_summary(divergence_audit)
-    selected_tf = _text(getattr(divergence_audit, "selected_last_meaningful_tf", "N/A"))
-    selected = _get_divergence_row(divergence_audit, selected_tf) if selected_tf != "N/A" else None
-    abc = "Yes" if getattr(selected, "abc_valid", False) else "No"
-    impulse = "Yes" if getattr(selected, "impulse_confirmed", False) else "No"
-    grade = _format_enum_value(getattr(selected, "grade", "N/A"))
+    selected = select_last_meaningful_divergence(divergence_audit)
+    if selected is None:
+        last_meaningful = "N/A"
+        abc = "N/A"
+        impulse = "N/A"
+        grade = "N/A"
+    else:
+        direction = _format_enum_value(getattr(selected, "direction", "N/A"))
+        last_meaningful = f"{_normalize_tf(selected.timeframe)} {direction}"
+        if is_official_divergence(selected):
+            abc = "Yes"
+            impulse = "Yes"
+        else:
+            abc = "No"
+            impulse = "No"
+        grade = _format_enum_value(getattr(selected, "grade", "N/A"))
     return (
         f"Audit: {audit_line}\n"
-        f"Last Meaningful: {selected_tf}\n"
+        f"Last Meaningful: {last_meaningful}\n"
         f"ABC: {abc}\n"
         f"Impulse: {impulse}\n"
         f"Grade: {grade}"
