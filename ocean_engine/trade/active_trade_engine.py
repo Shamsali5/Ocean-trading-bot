@@ -90,7 +90,7 @@ def build_type1_candidate(
             "direction": direction.value,
         },
         carry_result={
-            "state": carry.state.value,
+            "state": carry.state.value if carry.state != CarryState.MATURE else "ACTIVE",
             "direction": carry.direction.value if hasattr(carry.direction, "value") else str(carry.direction),
             "finished": carry.finished,
             "lower_tf_carry_available": bool(carry.timeframe),
