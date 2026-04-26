@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ocean_range_engine import detect_valid_range
 from ocean_engine.models.enums import Direction
 from ocean_engine.models.market import Candle, Leg, RangeState
 
@@ -214,6 +215,7 @@ def detect_range_from_legs(
     timeframe: str = "",
     min_legs: int = 3,
     max_legs: int = 8,
+    trace: object | None = None,
 ) -> RangeState:
     """Detect the most recent valid overlapping range window."""
 
@@ -223,6 +225,14 @@ def detect_range_from_legs(
         raise ValueError("max_legs must be >= min_legs")
 
     if len(legs) < min_legs:
+        _add_range_trace_for_invalid_state(
+            trace=trace,
+            reason="Not enough legs to form a range.",
+            parts_count=len(legs),
+            has_bounds=False,
+            midpoint_checked=False,
+            parent_recorded=False,
+        )
         return RangeState(
             timeframe=timeframe,
             is_range=False,
@@ -255,6 +265,14 @@ def detect_range_from_legs(
                 best_size = window_size
 
     if best_window is None:
+        _add_range_trace_for_invalid_state(
+            trace=trace,
+            reason="No overlapping leg window found.",
+            parts_count=len(ordered),
+            has_bounds=False,
+            midpoint_checked=False,
+            parent_recorded=False,
+        )
         return RangeState(
             timeframe=timeframe,
             is_range=False,
@@ -264,20 +282,63 @@ def detect_range_from_legs(
             summary="No overlapping leg window found.",
         )
 
-    overlap = calculate_leg_overlap(best_window)
-    if overlap is None:
+    strict_range = detect_valid_range(
+        candles=candles or [],
+        timeframe=timeframe,
+        swings=best_window,
+        trace=trace,
+    )
+    if not strict_range.valid:
+        _add_range_trace_for_invalid_state(
+            trace=trace,
+            reason=f"Invalid strict range: {strict_range.reason}",
+            parts_count=len(best_window),
+            has_bounds=bool(
+                strict_range.upper_edge is not None
+                and strict_range.lower_edge is not None
+                and strict_range.midpoint is not None
+            ),
+            midpoint_checked=True,
+            parent_recorded=bool(strict_range.parent_move_direction),
+        )
         return RangeState(
             timeframe=timeframe,
             is_range=False,
             active=False,
             price_location="UNCLEAR",
-            leg_count=0,
-            summary="No overlapping leg window found.",
+            leg_count=len(best_window),
+            summary=f"Invalid strict range: {strict_range.reason}",
         )
-    pivot_low, pivot_high = overlap
-    outer_lower_edge = min(leg.low for leg in best_window)
-    outer_upper_edge = max(leg.high for leg in best_window)
-    midpoint = (outer_upper_edge + outer_lower_edge) / 2.0
+
+    pivot_low = strict_range.pivot_zone_low
+    pivot_high = strict_range.pivot_zone_high
+    outer_lower_edge = strict_range.lower_edge
+    outer_upper_edge = strict_range.upper_edge
+    midpoint = strict_range.midpoint
+    if (
+        pivot_low is None
+        or pivot_high is None
+        or outer_lower_edge is None
+        or outer_upper_edge is None
+        or midpoint is None
+    ):
+        _add_range_trace_for_invalid_state(
+            trace=trace,
+            reason="Strict range did not provide complete boundaries.",
+            parts_count=len(best_window),
+            has_bounds=False,
+            midpoint_checked=False,
+            parent_recorded=bool(strict_range.parent_move_direction),
+        )
+        return RangeState(
+            timeframe=timeframe,
+            is_range=False,
+            active=False,
+            price_location="UNCLEAR",
+            leg_count=len(best_window),
+            summary="Strict range did not provide complete boundaries.",
+        )
+
     price_location = classify_price_location(
         current_price=current_price,
         lower_edge=outer_lower_edge,
@@ -327,4 +388,57 @@ def detect_range_from_legs(
             f"Status={state.status}."
         )
     return state
+
+
+def _add_range_trace_for_invalid_state(
+    *,
+    trace: object | None,
+    reason: str,
+    parts_count: int,
+    has_bounds: bool,
+    midpoint_checked: bool,
+    parent_recorded: bool,
+) -> None:
+    if trace is None or not hasattr(trace, "add_check"):
+        return
+    trace.add_check(
+        name="Range requires at least three sub-level moves",
+        passed=parts_count >= 3,
+        severity="ERROR" if parts_count < 3 else "INFO",
+        details=f"parts_count={parts_count}; {reason}",
+        file=__file__,
+        function="detect_range_from_legs",
+    )
+    trace.add_check(
+        name="Range has upper/lower/midpoint",
+        passed=has_bounds,
+        severity="ERROR" if not has_bounds else "INFO",
+        details=reason,
+        file=__file__,
+        function="detect_range_from_legs",
+    )
+    trace.add_check(
+        name="Range midpoint WAIT rule checked",
+        passed=midpoint_checked,
+        severity="ERROR" if not midpoint_checked else "INFO",
+        details=(
+            "Midpoint WAIT rule unavailable because strict range is invalid."
+            if not midpoint_checked
+            else "Midpoint WAIT rule evaluated in strict range flow."
+        ),
+        file=__file__,
+        function="detect_range_from_legs",
+    )
+    trace.add_check(
+        name="Range parent move recorded",
+        passed=parent_recorded,
+        severity="ERROR" if not parent_recorded else "INFO",
+        details=(
+            "Parent move direction unavailable because strict range is invalid."
+            if not parent_recorded
+            else "Parent move direction provided by strict range result."
+        ),
+        file=__file__,
+        function="detect_range_from_legs",
+    )
 

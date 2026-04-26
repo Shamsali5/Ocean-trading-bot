@@ -10,6 +10,7 @@ from ocean_engine.models.market import (
     DivergenceAudit,
     DivergenceState,
     MultiLevelStory,
+    MoveContext,
     RangeState,
     StructureState,
 )
@@ -472,3 +473,20 @@ def test_close_and_flip_when_selected_finished_and_opposite_fresh_exists() -> No
         multi_level_story=MultiLevelStory(),
     )
     assert decision.final_action == FinalAction.CLOSE_AND_FLIP
+
+
+def test_buy_not_downgraded_inside_decision_engine_for_move_context() -> None:
+    candidate = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+    )
+    audit = _audit_with_selected(candidate)
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=DivergenceAudit(),
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+    )
+    assert decision.final_action in {FinalAction.BUY, FinalAction.WAIT}

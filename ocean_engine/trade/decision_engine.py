@@ -8,6 +8,7 @@ from ocean_engine.models.market import (
     ActiveTradeCandidate,
     DecisionState,
     DivergenceAudit,
+    MoveContext,
     MultiLevelStory,
     StructureState,
     SupplyDemandZone,
@@ -171,6 +172,7 @@ def build_decision_state(
     multi_level_story: MultiLevelStory | None,
     zones: list[SupplyDemandZone] | None = None,
     position_mode: str = "UNKNOWN",
+    move_context: MoveContext | None = None,
 ) -> DecisionState:
     """Build final decision state and apply hard safety guards."""
 
@@ -190,6 +192,16 @@ def build_decision_state(
         decision.reason = (
             "Existing move finished; opposite official setup with carry is active."
         )
+
+    if (
+        move_context is not None
+        and decision.final_action in {FinalAction.BUY, FinalAction.SELL}
+        and move_context.current_origin == "UNCLEAR"
+    ):
+        decision.final_action = FinalAction.WAIT
+        decision.action = FinalAction.WAIT
+        decision.management_state = "NONE"
+        decision.reason = "Parent/current move separation unclear; framework v1.2 requires current move origin for fresh entry."
 
     guarded = apply_decision_guards(
         decision=decision,

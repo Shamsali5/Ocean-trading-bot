@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, MarketState
+from ocean_carry_engine import (
+    assign_carry_timeframe,
+    classify_carry_state as strict_classify_carry_state,
+)
+from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection
 from ocean_engine.models.market import CarryStatus, DivergenceAudit, DivergenceState, StructureState
 
-TIMEFRAME_CARRY_MAP = {
-    "4h": "1h",
-    "1h": "15m",
-    "15m": "5m",
-    "5m": "3m",
-    "3m": None,
-}
 TIMEFRAME_TO_AUDIT_FIELD = {
     "4h": "tf_4h",
     "1h": "tf_1h",
@@ -24,7 +21,7 @@ TIMEFRAME_TO_AUDIT_FIELD = {
 def get_carry_timeframe(origin_tf: str) -> str | None:
     """Map origin timeframe to its next lower carry timeframe."""
 
-    return TIMEFRAME_CARRY_MAP.get(origin_tf)
+    return assign_carry_timeframe(origin_tf)
 
 
 def direction_from_divergence(divergence_direction: DivergenceDirection) -> Direction:
@@ -41,42 +38,34 @@ def classify_carry_state(
     carry_structure: StructureState | None,
     carry_direction: Direction,
     carry_divergence: DivergenceState | None = None,
+    trace: object | None = None,
 ) -> CarryState:
     """Classify current carry lifecycle state for the mapped carry timeframe."""
 
-    if carry_structure is None or carry_direction in (Direction.NONE, Direction.UNCLEAR):
-        return CarryState.UNCLEAR
-
-    active_leg = carry_structure.active_leg
-    if active_leg is None:
-        return CarryState.UNCLEAR
-
     opposite_divergence = _is_opposite_divergence(carry_divergence, carry_direction)
     opposite_impulse = bool(opposite_divergence and carry_divergence and carry_divergence.impulse_confirmed)
-    if opposite_impulse:
-        return CarryState.EXHAUSTING
-
-    range_active = bool(
-        carry_structure.range_state is not None
-        and carry_structure.range_state.active
-    ) or carry_structure.market_state == MarketState.RANGE
-
-    if active_leg.direction != carry_direction:
-        return CarryState.MATURE if not opposite_impulse else CarryState.EXHAUSTING
-
-    if range_active:
-        return CarryState.MATURE
-
-    leg_count = len(carry_structure.legs)
-    if leg_count <= 2:
-        return CarryState.FRESH
-    return CarryState.ACTIVE
+    strict = strict_classify_carry_state(
+        origin_timeframe=getattr(carry_structure, "timeframe", ""),
+        direction=carry_direction,
+        lower_tf_context=carry_structure,
+        opposite_divergence_result=opposite_divergence,
+        opposite_impulse_result=opposite_impulse,
+        trace=trace,
+    )
+    return _carry_state_from_text(strict.state)
 
 
-def is_carry_finished(carry_divergence: DivergenceState | None, carry_direction: Direction) -> bool:
-    """Determine whether carry is finished by opposite official impulse."""
+def is_carry_finished(
+    carry_divergence: DivergenceState | None,
+    carry_direction: Direction,
+    *,
+    continuation_failed: bool,
+) -> bool:
+    """Determine whether carry is finished by strict opposite conditions."""
 
     if not _is_official_divergence(carry_divergence):
+        return False
+    if not continuation_failed:
         return False
     if carry_direction == Direction.UP and carry_divergence.direction == DivergenceDirection.BEARISH:
         return True
@@ -90,6 +79,7 @@ def build_carry_status(
     origin_direction: DivergenceDirection,
     structures: dict[str, StructureState],
     divergence_audit: DivergenceAudit,
+    trace: object | None = None,
 ) -> CarryStatus:
     """Build carry status from origin timeframe, mapped carry row, and structure."""
 
@@ -109,20 +99,19 @@ def build_carry_status(
 
     opposite_divergence = _is_opposite_divergence(carry_divergence, carry_direction)
     opposite_impulse = bool(opposite_divergence and carry_divergence and carry_divergence.impulse_confirmed)
-    finished = is_carry_finished(carry_divergence, carry_direction)
-
-    state = classify_carry_state(
-        carry_structure=carry_structure,
-        carry_direction=carry_direction,
-        carry_divergence=carry_divergence,
+    strict = strict_classify_carry_state(
+        origin_timeframe=origin_tf,
+        direction=carry_direction,
+        lower_tf_context=carry_structure,
+        opposite_divergence_result=opposite_divergence,
+        opposite_impulse_result=opposite_impulse,
+        trace=trace,
     )
+    state = _carry_state_from_text(strict.state)
+    finished = bool(strict.carry_finished)
 
-    cycle_complete = "YES" if finished else "NO" if state != CarryState.UNCLEAR else "UNCLEAR"
-    summary = (
-        f"Origin {origin_tf} -> carry {carry_tf}, direction={carry_direction.value}, "
-        f"state={state.value}, opposite_divergence={opposite_divergence}, "
-        f"opposite_impulse={opposite_impulse}, finished={finished}"
-    )
+    cycle_complete = strict.required_lower_cycle_complete
+    summary = strict.reason
     return CarryStatus(
         timeframe=carry_tf,
         direction=carry_direction,
@@ -132,6 +121,7 @@ def build_carry_status(
         opposite_impulse=opposite_impulse,
         finished=finished,
         summary=summary,
+        notes=summary,
     )
 
 
@@ -161,3 +151,16 @@ def _is_official_divergence(state: DivergenceState | None) -> bool:
         and state.impulse_confirmed
         and state.direction in (DivergenceDirection.BULLISH, DivergenceDirection.BEARISH)
     )
+
+
+def _carry_state_from_text(state: str) -> CarryState:
+    value = str(state or "").strip().upper()
+    if value == CarryState.FRESH.value:
+        return CarryState.FRESH
+    if value == CarryState.ACTIVE.value:
+        return CarryState.ACTIVE
+    if value == CarryState.MATURE.value:
+        return CarryState.MATURE
+    if value == CarryState.EXHAUSTING.value:
+        return CarryState.EXHAUSTING
+    return CarryState.UNCLEAR

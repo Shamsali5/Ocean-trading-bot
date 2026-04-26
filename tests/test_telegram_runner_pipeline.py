@@ -93,6 +93,9 @@ def test_build_market_report_contains_pipeline_outputs(tmp_path: Path) -> None:
     assert report.multi_level_story is not None
     assert report.decision is not None
     assert report.current_price == market_data["3m"].candles[-1].close
+    assert report.framework_audit_trace is not None
+    failed_names = {check.name for check in report.framework_audit_trace.failed_checks()}
+    assert "Analysis starts from highest timeframe" not in failed_names
 
 
 def test_run_once_with_mocked_fetch_and_sender_returns_reports(
@@ -188,3 +191,98 @@ def test_openai_api_key_not_required_for_runner(
 
     reports = telegram_runner.run_once(send_telegram=False)
     assert len(reports) == 1
+
+
+def test_buy_forced_to_wait_when_high_timeframe_context_missing(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(["5m", "3m"])
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    report.decision.final_action = FinalAction.BUY
+    report.decision.action = FinalAction.BUY
+    report.decision.reason = "Synthetic buy for guard test."
+
+    trace = report.framework_audit_trace
+    assert trace is not None
+    conditions = telegram_runner.verify_timeframe_order(market_data.keys(), trace)
+    telegram_runner.apply_htf_first_guard(report.decision, conditions, trace)
+
+    assert report.decision.final_action == FinalAction.WAIT
+    assert report.decision.action == FinalAction.WAIT
+    assert "Higher-timeframe context missing; framework v1.2 requires highest-timeframe-first reading." in report.decision.reason
+
+
+def test_wait_action_not_overridden_when_high_timeframe_context_missing(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(["5m", "3m"])
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    report.decision.final_action = FinalAction.WAIT
+    report.decision.action = FinalAction.WAIT
+    report.decision.reason = "No executable setup."
+
+    trace = report.framework_audit_trace
+    assert trace is not None
+    conditions = telegram_runner.verify_timeframe_order(market_data.keys(), trace)
+    telegram_runner.apply_htf_first_guard(report.decision, conditions, trace)
+
+    assert report.decision.final_action == FinalAction.WAIT
+    assert report.decision.reason == "No executable setup."
+
+
+def test_buy_forced_to_wait_when_parent_current_separation_is_unclear(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    report.decision.final_action = FinalAction.BUY
+    report.decision.action = FinalAction.BUY
+    report.decision.reason = "Synthetic buy for move-separation guard test."
+
+    report.move_context = report.move_context.__class__(
+        parent_direction="UP",
+        parent_timeframe="4h",
+        parent_state="TREND",
+        parent_active=True,
+        current_direction="UP",
+        current_timeframe="15m",
+        current_state="TREND",
+        current_origin="UNCLEAR",
+        current_origin_price_zone=None,
+        current_with_parent=None,
+        summary="Parent/current separation unclear.",
+    )
+    trace = report.framework_audit_trace
+    assert trace is not None
+
+    telegram_runner.apply_parent_current_separation_guard(
+        decision=report.decision,
+        move_context=report.move_context,
+        trace=trace,
+    )
+
+    assert report.decision.final_action == FinalAction.WAIT
+    assert report.decision.action == FinalAction.WAIT
+    assert "Parent/current move separation unclear" in report.decision.reason
+
+
+def test_build_market_report_records_range_audit_checks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    trace = report.framework_audit_trace
+    assert trace is not None
+    names = {check.name for check in trace.checks}
+    assert "Range requires at least three sub-level moves" in names
+    assert "Range has upper/lower/midpoint" in names
+    assert "Range midpoint WAIT rule checked" in names
+    assert "Range parent move recorded" in names
+
+
+def test_build_market_report_records_zone_audit_checks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    trace = report.framework_audit_trace
+    assert trace is not None
+    names = {check.name for check in trace.checks}
+    assert "Supply/demand checked after structure" in names
+    assert "Zone status classified" in names
+    assert "Zone alignment classified" in names

@@ -43,6 +43,24 @@ def format_final_action(decision: DecisionState) -> str:
 def format_market_story(report: MarketReport) -> str:
     """Format market story as what each timeframe is currently doing."""
 
+    move_context = getattr(report, "move_context", None)
+    parent_line = ""
+    current_line = ""
+    if move_context is not None:
+        parent_line = (
+            "Parent Move: "
+            f"{_normalize_tf(_text(getattr(move_context, 'parent_timeframe', ''), default='UNCLEAR'))} "
+            f"{_text(getattr(move_context, 'parent_direction', 'UNCLEAR'), default='UNCLEAR')} "
+            f"{_text(getattr(move_context, 'parent_state', 'UNCLEAR'), default='UNCLEAR')}"
+        )
+        current_line = (
+            "Current Move: "
+            f"{_normalize_tf(_text(getattr(move_context, 'current_timeframe', ''), default='UNCLEAR'))} "
+            f"{_text(getattr(move_context, 'current_direction', 'UNCLEAR'), default='UNCLEAR')} "
+            f"{_text(getattr(move_context, 'current_state', 'UNCLEAR'), default='UNCLEAR')} "
+            f"| Origin: {_text(getattr(move_context, 'current_origin', 'UNCLEAR'), default='UNCLEAR')}"
+        )
+
     structures = getattr(report, "structures", None) or getattr(report, "structure", None) or {}
     story_parts: list[str] = []
     for tf in TIMEFRAME_ORDER:
@@ -59,7 +77,12 @@ def format_market_story(report: MarketReport) -> str:
         story_line = "Timeframe Story: " + " | ".join(story_parts)
 
     counter_move = _format_counter_move(report)
-    return f"{story_line}\n{counter_move}"
+    lines = [story_line, counter_move]
+    if parent_line:
+        lines.insert(0, parent_line)
+    if current_line:
+        lines.insert(1 if parent_line else 0, current_line)
+    return "\n".join(lines)
 
 
 def format_divergence_audit(divergence_audit: DivergenceAudit | None) -> str:
