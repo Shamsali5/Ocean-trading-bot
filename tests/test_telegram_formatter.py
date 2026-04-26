@@ -133,6 +133,19 @@ def test_compact_report_includes_divergence_audit() -> None:
     assert "15m:Bullish" in text
 
 
+def test_market_story_summarizes_all_timeframes_current_state() -> None:
+    report = _sample_report()
+    report.structures = {
+        "4h": StructureState(timeframe="4h", direction=Direction.DOWN, market_state="RANGE"),
+        "1h": StructureState(timeframe="1h", direction=Direction.DOWN, market_state="TREND"),
+        "15m": StructureState(timeframe="15m", direction=Direction.UP, market_state="TRANSITION"),
+        "5m": StructureState(timeframe="5m", direction=Direction.UP, market_state="RANGE"),
+        "3m": StructureState(timeframe="3m", direction=Direction.DOWN, market_state="TREND"),
+    }
+    text = format_compact_telegram_report(report)
+    assert "Timeframe Story: 4H DOWN RANGE | 1H DOWN TREND | 15m UP TRANSITION | 5m UP RANGE | 3m DOWN TREND" in text
+
+
 def test_compact_report_includes_active_trade_audit() -> None:
     text = format_compact_telegram_report(_sample_report())
     assert "ACTIVE TRADE" in text
@@ -308,7 +321,7 @@ def test_range_ownership_appears() -> None:
         )
     }
     text = format_compact_telegram_report(report)
-    assert "Ownership: UP" in text
+    assert "15m | Upper: 101.00 | Lower: 99.00" in text
 
 
 def test_range_section_includes_upper_lower_boundaries_and_multitimeframe_notice() -> None:
@@ -381,14 +394,19 @@ def test_range_section_includes_upper_lower_boundaries_and_multitimeframe_notice
         ),
     }
     text = format_compact_telegram_report(report)
-    assert "Active Ranges: 3" in text
-    assert "Multi-timeframe ranges: 4H,1H,15m" in text
+    assert "Active Ranges: 3" not in text
+    assert "Multi-timeframe ranges: 4H,1H,15m" not in text
     assert "Upper: 79000.00" in text
     assert "Lower: 73000.00" in text
     assert "Upper: 78000.00" in text
     assert "Lower: 76000.00" in text
     assert "\n5m | Active: YES" not in text
     assert "\n3m | Active: YES" not in text
+    assert "4H | Upper: 79000.00 | Lower: 73000.00" in text
+    assert "1H | Upper: 78000.00 | Lower: 76000.00" in text
+    assert "15m | Upper: 78182.80 | Lower: 77280.00" in text
+    assert "Location:" not in text
+    assert "Ownership:" not in text
 
 
 def test_hierarchy_smallest_active_internal_move_uses_lowest_active_timeframe() -> None:
@@ -519,7 +537,8 @@ def test_failed_breakout_appears() -> None:
         )
     }
     text = format_compact_telegram_report(report)
-    assert "Status: FAILED_BREAK_UP" in text
+    assert "15m | Upper: 101.00 | Lower: 99.00" in text
+    assert "FAILED_BREAK_UP" not in text
 
 
 def test_formatter_shows_market_hierarchy_section() -> None:
