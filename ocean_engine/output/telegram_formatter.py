@@ -603,10 +603,21 @@ def _format_counter_move(report: MarketReport) -> str:
     tactical_label = "tactical" if target_text != _direction_text_from_active(active_direction) else "aligned"
     direction_text = "Bullish" if target_text == "BULLISH" else "Bearish"
     base = f"Counter Move: {_normalize_tf(tf)} {direction_text} {setup_display} ({tactical_label})"
+    trigger_line = _format_counter_trigger_line(state)
     if context_bits:
         context_text = " + ".join(context_bits)
-        return f"{base} from {context_text}."
-    return f"{base}."
+        return f"{base} from {context_text}.\n{trigger_line}"
+    return f"{base}.\n{trigger_line}"
+
+
+def _format_counter_trigger_line(state: Any) -> str:
+    """Render counter-move trigger price/time from divergence metadata."""
+
+    trigger = _format_price_time(
+        price=getattr(state, "divergence_price", None),
+        timestamp=getattr(state, "divergence_time_utc", ""),
+    )
+    return f"Counter Trigger Price/Time: {trigger}"
 
 
 def _infer_counter_setup_label(

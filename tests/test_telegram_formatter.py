@@ -388,6 +388,7 @@ def test_market_story_mentions_lower_tf_counter_move_at_range_bottom_with_demand
         "Counter Move: 5m Bullish Divergence (tactical) from 4H range lower boundary + 1H demand."
         in text
     )
+    assert "Counter Trigger Price/Time: 73,210.00 @ 2026-04-26T10:00:00Z" in text
 
 
 def test_failed_breakout_appears() -> None:
