@@ -726,3 +726,54 @@ def test_buy_not_downgraded_inside_decision_engine_for_move_context() -> None:
         multi_level_story=MultiLevelStory(),
     )
     assert decision.final_action in {FinalAction.BUY, FinalAction.WAIT}
+
+
+def test_final_resolver_prioritizes_management_for_active_short_over_entry_buy() -> None:
+    selected = _candidate(
+        direction=Direction.DOWN,
+        fresh_entry_valid=True,
+        existing_hold_valid=True,
+        carry_state=CarryState.ACTIVE,
+        finished=False,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+        type_label="15m Bearish Type 1",
+    )
+    audit = ActiveTradeAudit(
+        tf_15m=selected,
+        selected_active_trade_tf="15m",
+    )
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=DivergenceAudit(),
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+        position_mode="SHORT",
+    )
+    assert decision.final_action == FinalAction.HOLD_SHORT
+
+
+def test_final_resolver_uses_entry_when_no_active_trade_exists() -> None:
+    selected = _candidate(
+        direction=Direction.UP,
+        fresh_entry_valid=True,
+        existing_hold_valid=False,
+        carry_state=CarryState.FRESH,
+        finished=False,
+        origin_timeframe="15m",
+        carry_timeframe="5m",
+        type_label="15m Bullish Type 1",
+    )
+    audit = ActiveTradeAudit(
+        tf_15m=selected,
+        selected_active_trade_tf="15m",
+    )
+    selected.exists = False
+    decision = build_decision_state(
+        structures={"15m": StructureState(timeframe="15m")},
+        divergence_audit=DivergenceAudit(),
+        active_trade_audit=audit,
+        multi_level_story=MultiLevelStory(),
+        position_mode="FLAT",
+    )
+    assert decision.final_action == FinalAction.WAIT

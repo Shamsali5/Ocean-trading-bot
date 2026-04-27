@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ocean_entry_gate import evaluate_fresh_entry
+from ocean_final_action_resolver import resolve_final_action
 from ocean_management_gate import evaluate_position_management
 from ocean_engine.models.enums import CarryState, Direction, FinalAction, SetupType
 from ocean_engine.models.market import (
@@ -182,6 +183,19 @@ def build_decision_state(
     selected = selected_active_trade_or_default(active_trade_audit)
     resolved_position_mode = _normalize_position_mode(position_mode)
     decision = initial_decision_from_active_trade(selected, position_mode=position_mode)
+    entry_decision_payload = {
+        "fresh_entry_valid": bool(selected.fresh_entry_valid),
+        "side": (
+            "BUY"
+            if _candidate_direction(selected) == Direction.UP and selected.fresh_entry_valid and not selected.too_late_to_chase
+            else "SELL"
+            if _candidate_direction(selected) == Direction.DOWN and selected.fresh_entry_valid and not selected.too_late_to_chase
+            else None
+        ),
+        "entry_zone": selected.origin_price_zone,
+        "invalidation": selected.invalidation,
+        "reason": decision.reason,
+    }
 
     if multi_level_story is not None:
         decision.controlling_origin = multi_level_story.controlling_origin
@@ -213,6 +227,7 @@ def build_decision_state(
             decision.action = management_action
             decision.management_state = management_decision.management_state
             decision.reason = management_decision.reason
+            entry_decision_payload["reason"] = decision.reason
 
     if (
         move_context is not None
@@ -307,6 +322,39 @@ def build_decision_state(
             decision.fresh_entry_valid = False
             if decision.reason not in decision.guard_reasons:
                 decision.guard_reasons.append(decision.reason)
+        entry_decision_payload = {
+            "fresh_entry_valid": bool(entry_decision.fresh_entry_valid),
+            "side": entry_decision.side,
+            "entry_zone": entry_decision.entry_zone,
+            "invalidation": entry_decision.invalidation,
+            "reason": entry_decision.reason,
+        }
+
+    final_resolved = resolve_final_action(
+        entry_decision=entry_decision_payload,
+        management_decision=management_decision,
+        active_trade={
+            "exists": selected.exists,
+            "trade_function": (
+                selected.trade_function.value
+                if hasattr(selected.trade_function, "value")
+                else str(selected.trade_function)
+            ),
+            "type_label": selected.type_label,
+            "controlling_origin": decision.controlling_origin,
+            "active_execution_trade": decision.active_execution_trade,
+            "origin_price_zone": selected.origin_price_zone,
+            "invalidation": selected.invalidation,
+            "carry_timeframe": selected.carry_timeframe,
+        },
+        framework_trace=trace,
+        trace=trace,
+    )
+    resolved_action = _action_from_signal(final_resolved.signal)
+    decision.final_action = resolved_action
+    decision.action = resolved_action
+    decision.management_state = final_resolved.management_state
+    decision.reason = final_resolved.reason
 
     guarded = apply_decision_guards(
         decision=decision,
@@ -454,6 +502,25 @@ def _action_from_management_signal(signal: str, selected_direction: Direction) -
             return FinalAction.HOLD_LONG
         if selected_direction == Direction.DOWN:
             return FinalAction.HOLD_SHORT
+    return FinalAction.WAIT
+
+
+def _action_from_signal(signal: str) -> FinalAction:
+    normalized = str(signal or "").strip().upper().replace("_", " ")
+    if normalized == "BUY":
+        return FinalAction.BUY
+    if normalized == "SELL":
+        return FinalAction.SELL
+    if normalized == "HOLD LONG":
+        return FinalAction.HOLD_LONG
+    if normalized == "HOLD SHORT":
+        return FinalAction.HOLD_SHORT
+    if normalized == "CLOSE LONG":
+        return FinalAction.CLOSE_LONG
+    if normalized == "CLOSE SHORT":
+        return FinalAction.CLOSE_SHORT
+    if normalized == "CLOSE AND FLIP":
+        return FinalAction.CLOSE_AND_FLIP
     return FinalAction.WAIT
 
 
