@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import requests
+from ocean_engine.utils import http_client as requests
 
 from ocean_engine.config import BINANCE_FUTURES_KLINES_URL
 from ocean_engine.models.market import Candle, TimeframeData
