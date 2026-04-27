@@ -1,0 +1,74 @@
+//@version=5
+indicator("Ocean Divergence Detector", shorttitle="OceanDiv", overlay=true, max_labels_count=500)
+
+// This script confirms divergence only when a pivot is locked in.
+src = input.source(close, "Oscillator Source")
+rsiLength = input.int(14, "RSI Length", minval=2)
+pivotLeft = input.int(5, "Pivot Left Bars", minval=1)
+pivotRight = input.int(5, "Pivot Right Bars", minval=1)
+minBarsBetweenPivots = input.int(5, "Min Bars Between Pivots", minval=1)
+maxBarsBetweenPivots = input.int(80, "Max Bars Between Pivots", minval=2)
+showBullish = input.bool(true, "Show Regular Bullish Divergence")
+showBearish = input.bool(true, "Show Regular Bearish Divergence")
+
+osc = ta.rsi(src, rsiLength)
+
+newLowPivot = not na(ta.pivotlow(low, pivotLeft, pivotRight)) and not na(ta.pivotlow(osc, pivotLeft, pivotRight))
+newHighPivot = not na(ta.pivothigh(high, pivotLeft, pivotRight)) and not na(ta.pivothigh(osc, pivotLeft, pivotRight))
+
+currentLowPrice = low[pivotRight]
+previousLowPrice = ta.valuewhen(newLowPivot, low[pivotRight], 1)
+currentLowOsc = osc[pivotRight]
+previousLowOsc = ta.valuewhen(newLowPivot, osc[pivotRight], 1)
+currentLowBar = bar_index - pivotRight
+previousLowBar = ta.valuewhen(newLowPivot, bar_index - pivotRight, 1)
+lowPivotDistance = currentLowBar - previousLowBar
+lowPivotDistanceOk = not na(lowPivotDistance) and lowPivotDistance >= minBarsBetweenPivots and lowPivotDistance <= maxBarsBetweenPivots
+
+currentHighPrice = high[pivotRight]
+previousHighPrice = ta.valuewhen(newHighPivot, high[pivotRight], 1)
+currentHighOsc = osc[pivotRight]
+previousHighOsc = ta.valuewhen(newHighPivot, osc[pivotRight], 1)
+currentHighBar = bar_index - pivotRight
+previousHighBar = ta.valuewhen(newHighPivot, bar_index - pivotRight, 1)
+highPivotDistance = currentHighBar - previousHighBar
+highPivotDistanceOk = not na(highPivotDistance) and highPivotDistance >= minBarsBetweenPivots and highPivotDistance <= maxBarsBetweenPivots
+
+regularBullish = showBullish and newLowPivot and lowPivotDistanceOk and currentLowPrice < previousLowPrice and currentLowOsc > previousLowOsc
+regularBearish = showBearish and newHighPivot and highPivotDistanceOk and currentHighPrice > previousHighPrice and currentHighOsc < previousHighOsc
+
+plotshape(
+     regularBullish,
+     title="Regular Bullish Divergence",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     textcolor=color.white,
+     text="Bull Div",
+     size=size.tiny,
+     offset=-pivotRight
+)
+
+plotshape(
+     regularBearish,
+     title="Regular Bearish Divergence",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     textcolor=color.white,
+     text="Bear Div",
+     size=size.tiny,
+     offset=-pivotRight
+)
+
+alertcondition(
+     regularBullish,
+     title="Ocean Bullish Divergence",
+     message="Ocean Bullish Divergence confirmed on {{ticker}} ({{interval}})."
+)
+
+alertcondition(
+     regularBearish,
+     title="Ocean Bearish Divergence",
+     message="Ocean Bearish Divergence confirmed on {{ticker}} ({{interval}})."
+)
