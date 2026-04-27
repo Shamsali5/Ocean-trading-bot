@@ -38,14 +38,16 @@ def classify_carry_state(
     carry_structure: StructureState | None,
     carry_direction: Direction,
     carry_divergence: DivergenceState | None = None,
+    origin_timeframe: str | None = None,
     trace: object | None = None,
 ) -> CarryState:
     """Classify current carry lifecycle state for the mapped carry timeframe."""
 
     opposite_divergence = _is_opposite_divergence(carry_divergence, carry_direction)
     opposite_impulse = bool(opposite_divergence and carry_divergence and carry_divergence.impulse_confirmed)
+    strict_origin = (origin_timeframe or "").strip() or _infer_origin_timeframe(carry_structure)
     strict = strict_classify_carry_state(
-        origin_timeframe=getattr(carry_structure, "timeframe", ""),
+        origin_timeframe=strict_origin,
         direction=carry_direction,
         lower_tf_context=carry_structure,
         opposite_divergence_result=opposite_divergence,
@@ -164,3 +166,16 @@ def _carry_state_from_text(state: str) -> CarryState:
     if value == CarryState.EXHAUSTING.value:
         return CarryState.EXHAUSTING
     return CarryState.UNCLEAR
+
+
+def _infer_origin_timeframe(carry_structure: StructureState | None) -> str:
+    """Infer origin timeframe from carry timeframe for legacy callers."""
+
+    carry_tf = getattr(carry_structure, "timeframe", "") if carry_structure is not None else ""
+    reverse_map = {
+        "1h": "4h",
+        "15m": "1h",
+        "5m": "15m",
+        "3m": "5m",
+    }
+    return reverse_map.get(carry_tf, "")
