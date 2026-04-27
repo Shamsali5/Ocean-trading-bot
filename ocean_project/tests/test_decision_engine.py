@@ -611,7 +611,12 @@ def test_close_and_flip_when_selected_finished_and_opposite_fresh_exists() -> No
         structures={"15m": StructureState(timeframe="15m")},
         divergence_audit=divergence_audit,
         active_trade_audit=audit,
-        multi_level_story=MultiLevelStory(direction=Direction.DOWN),
+        multi_level_story=MultiLevelStory(
+            active=True,
+            direction=Direction.DOWN,
+            confirmed_timeframes=["15m", "5m"],
+            higher_tf_status="OFFICIAL_MULTI_LEVEL",
+        ),
         position_mode="LONG",
     )
     assert decision.final_action == FinalAction.CLOSE_AND_FLIP

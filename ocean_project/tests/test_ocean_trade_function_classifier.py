@@ -31,13 +31,36 @@ def test_breakout_trade_requires_valid_type3() -> None:
     assert "Trade function separate from Type label" in _names(trace)
 
 
+def test_breakout_trade_requires_impulse_and_carry_confirmation() -> None:
+    result = classify_trade_function(
+        move_context=None,
+        type_classification={"type_label": "TYPE_3", "valid": True},
+        range_result={"timeframe": "15m", "price_location": "UPPER_EDGE"},
+        zone_results=[],
+        multi_level_result={
+            "candidate_kind": "TYPE3",
+            "impulse_confirmed": False,
+            "carry_confirmed": True,
+            "structure_confirmed": True,
+        },
+        trace=None,
+    )
+    assert result.valid is False
+    assert result.trade_function == "NONE"
+    assert "impulse" in result.reason.lower()
+
+
 def test_pullback_continuation_trade_requires_valid_type2() -> None:
     result = classify_trade_function(
         move_context=None,
         type_classification={"type_label": "TYPE_2", "valid": True},
         range_result={"timeframe": "15m"},
         zone_results=[],
-        multi_level_result={"candidate_kind": "TYPE2"},
+        multi_level_result={
+            "candidate_kind": "TYPE2",
+            "impulse_confirmed": True,
+            "carry_confirmed": True,
+        },
         trace=None,
     )
     assert result.valid is True

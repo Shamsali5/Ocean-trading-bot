@@ -82,11 +82,28 @@ def test_close_and_flip_requires_new_authority_not_micro_only() -> None:
     payload["higher_context"] = {
         "supports_weakening": True,
         "opposite_side_has_carry": True,
+        "official_opposite_authority": True,
     }
     payload["room_for_new_move"] = True
     decision = evaluate_position_management(**payload)
     assert decision.signal == "CLOSE_AND_FLIP"
     assert decision.management_state == "CLOSE_AND_FLIP"
+
+
+def test_close_and_flip_requires_official_opposite_authority() -> None:
+    payload = _base_payload("BULLISH")
+    payload["carry_result"] = {"state": "EXHAUSTING", "finished": True}
+    payload["opposite_divergence_result"] = {"exists": True, "direction": "BEARISH", "micro_only": False}
+    payload["opposite_impulse_result"] = {"confirmed": True, "direction": "BEARISH"}
+    payload["higher_context"] = {
+        "supports_weakening": True,
+        "opposite_side_has_carry": True,
+        "official_opposite_authority": False,
+    }
+    payload["room_for_new_move"] = True
+    decision = evaluate_position_management(**payload)
+    assert decision.signal == "CLOSE_LONG"
+    assert decision.management_state == "FULL_CLOSE"
 
 
 def test_micro_divergence_cannot_flip_even_with_other_flip_inputs() -> None:
@@ -97,6 +114,7 @@ def test_micro_divergence_cannot_flip_even_with_other_flip_inputs() -> None:
     payload["higher_context"] = {
         "supports_weakening": True,
         "opposite_side_has_carry": True,
+        "official_opposite_authority": True,
     }
     payload["room_for_new_move"] = True
     decision = evaluate_position_management(**payload)

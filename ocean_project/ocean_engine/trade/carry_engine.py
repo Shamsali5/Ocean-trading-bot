@@ -89,7 +89,7 @@ def build_carry_status(
     carry_direction = direction_from_divergence(origin_direction)
     if carry_tf is None:
         return CarryStatus(
-            timeframe=origin_tf,
+            timeframe="",
             direction=carry_direction,
             state=CarryState.UNCLEAR,
             cycle_complete="UNCLEAR",

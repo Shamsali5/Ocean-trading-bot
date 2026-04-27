@@ -230,8 +230,8 @@ def build_market_report(
             "selected_active_trade_tf": _text_or_na(active_trade_audit.selected_active_trade_tf),
         },
         "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {
-            "if_already_in": _position_action_if_already_in(final_action_text),
-            "if_not_in": _position_action_if_not_in(final_action_text),
+            "already_in_status": _position_action_if_already_in(final_action_text),
+            "not_in_status": _position_action_if_not_in(final_action_text),
             "final_action": final_action_text,
         },
         "O MARKET_HIERARCHY": {

@@ -29,6 +29,7 @@ def test_assign_carry_timeframe_contract_mapping() -> None:
     assert assign_carry_timeframe("1h") == "15m"
     assert assign_carry_timeframe("15m") == "5m"
     assert assign_carry_timeframe("5m") == "3m"
+    assert assign_carry_timeframe("3m") is None
 
 
 def test_classify_carry_state_fresh() -> None:
@@ -69,3 +70,17 @@ def test_classify_carry_state_finished_requires_three_conditions() -> None:
     assert result.state == "EXHAUSTING"
     assert result.carry_finished is True
     assert result.required_lower_cycle_complete == "YES"
+
+
+def test_build_carry_status_never_uses_origin_as_carry_timeframe() -> None:
+    from ocean_engine.models.enums import DivergenceDirection
+    from ocean_engine.models.market import DivergenceAudit
+    from ocean_engine.trade.carry_engine import build_carry_status
+
+    result = build_carry_status(
+        origin_tf="3m",
+        origin_direction=DivergenceDirection.BULLISH,
+        structures={},
+        divergence_audit=DivergenceAudit(),
+    )
+    assert result.timeframe == ""

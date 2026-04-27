@@ -31,7 +31,6 @@ def resolve_final_action(
 ) -> FinalDecision:
     """Return one contract-valid final action using framework priority rules."""
 
-    has_active_trade = bool(_bool(active_trade, "exists"))
     fatal_framework_error = _framework_has_fatal_error(framework_trace)
     mgmt_signal = _normalize_signal(_value(management_decision, "signal"))
     entry_signal = _normalize_signal(
@@ -53,6 +52,7 @@ def resolve_final_action(
         "NONE",
     }:
         mgmt_state = "NONE"
+    has_active_trade = bool(_bool(active_trade, "exists") and mgmt_state != "NONE")
 
     conflict = _signals_conflict(
         entry_signal=entry_signal,

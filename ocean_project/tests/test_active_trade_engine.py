@@ -33,6 +33,18 @@ def _structure(timeframe: str) -> StructureState:
     return StructureState(timeframe=timeframe, legs=[])
 
 
+def _carry_structure(timeframe: str, direction: Direction) -> StructureState:
+    active_leg = Leg(
+        start_index=0,
+        end_index=2,
+        direction=direction,
+        high=101.0 if direction == Direction.UP else 100.0,
+        low=99.0 if direction == Direction.UP else 98.0,
+        is_active=True,
+    )
+    return StructureState(timeframe=timeframe, active_leg=active_leg, legs=[active_leg])
+
+
 def _type3_structure(
     timeframe: str,
     *,
@@ -210,7 +222,10 @@ def test_1h_official_divergence_creates_1h_type1_candidate(monkeypatch) -> None:
 
 
 def test_bullish_range_breakout_creates_bullish_type3_candidate() -> None:
-    structures = {"15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.6)}
+    structures = {
+        "15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.6),
+        "5m": _carry_structure("5m", Direction.UP),
+    }
     structures["15m"].candles = [
         Candle(open_time=0, open=99.8, high=100.2, low=99.6, close=99.9, volume=1.0, close_time=1000),
         Candle(open_time=1, open=100.0, high=101.0, low=99.9, close=100.7, volume=1.0, close_time=2000),
@@ -249,7 +264,10 @@ def test_type1_candidate_uses_divergence_event_price_time_as_start() -> None:
 
 
 def test_bearish_range_breakdown_creates_bearish_type3_candidate() -> None:
-    structures = {"15m": _type3_structure("15m", status="BROKEN_DOWN", breakout_direction=Direction.DOWN, current_price=88.2)}
+    structures = {
+        "15m": _type3_structure("15m", status="BROKEN_DOWN", breakout_direction=Direction.DOWN, current_price=88.2),
+        "5m": _carry_structure("5m", Direction.DOWN),
+    }
     candidate = detect_type3_candidate(timeframe="15m", structures=structures)
     assert candidate.exists is True
     assert candidate.setup_type == SetupType.TYPE_3
@@ -258,7 +276,10 @@ def test_bearish_range_breakdown_creates_bearish_type3_candidate() -> None:
 
 
 def test_type3_does_not_require_divergence() -> None:
-    structures = {"15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.2)}
+    structures = {
+        "15m": _type3_structure("15m", status="BROKEN_UP", breakout_direction=Direction.UP, current_price=101.2),
+        "5m": _carry_structure("5m", Direction.UP),
+    }
     audit = build_active_trade_audit(structures, DivergenceAudit())
     assert audit.tf_15m.exists is True
     assert audit.tf_15m.setup_type == SetupType.TYPE_3
@@ -844,7 +865,14 @@ def test_range_rejection_candidate_created_at_upper_edge_with_bearish_rejection(
             legs=[Leg(start_index=0, end_index=2, direction=Direction.DOWN, high=109.5, low=108.6, is_active=True)],
         ),
     }
-    candidate = detect_range_rejection_candidate(timeframe="15m", structures=structures)
+    divergence_audit = DivergenceAudit(
+        tf_15m=_official_divergence("15m", DivergenceDirection.BEARISH, "109.80-110.00")
+    )
+    candidate = detect_range_rejection_candidate(
+        timeframe="15m",
+        structures=structures,
+        divergence=divergence_audit.tf_15m,
+    )
     assert candidate.exists is True
     assert candidate.trade_function == TradeFunction.RANGE_REJECTION_TRADE
     assert candidate.direction == Direction.DOWN

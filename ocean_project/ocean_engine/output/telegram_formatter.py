@@ -492,8 +492,8 @@ def _build_framework_output_dict(
             "details": active_trade_text,
         },
         "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {
-            "if_already_in": if_already_in,
-            "if_not_in": if_not_in,
+            "already_in_status": if_already_in,
+            "not_in_status": if_not_in,
             "flip_to": flip_to,
             "flip_carry": flip_carry,
             "details": position_management_text,

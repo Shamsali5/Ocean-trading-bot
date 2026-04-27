@@ -877,6 +877,7 @@ def detect_range_rejection_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
 
     timeframe = _kwargs.get("timeframe", "") if isinstance(_kwargs, dict) else ""
     structures = _kwargs.get("structures", {}) if isinstance(_kwargs, dict) else {}
+    divergence = _kwargs.get("divergence", None) if isinstance(_kwargs, dict) else None
     if not timeframe:
         return default_active_trade_candidate("")
     structure = structures.get(timeframe) if isinstance(structures, dict) else None
@@ -913,6 +914,16 @@ def detect_range_rejection_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         candidate = default_active_trade_candidate(timeframe)
         candidate.selection_reason = "No rejection impulse at range edge."
         return candidate
+    divergence_confirmed = bool(
+        isinstance(divergence, DivergenceState)
+        and divergence.exists
+        and divergence.abc_valid
+        and divergence.impulse_confirmed
+        and (
+            (direction == Direction.UP and divergence.direction == DivergenceDirection.BULLISH)
+            or (direction == Direction.DOWN and divergence.direction == DivergenceDirection.BEARISH)
+        )
+    )
 
     carry_tf, carry_state, carry_finished = _type3_carry_context(
         timeframe=timeframe,
@@ -936,7 +947,7 @@ def detect_range_rejection_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         range_result=range_state,
         zone_results=[],
         candidate_kind="RANGE_REJECTION",
-        divergence_confirmed=True,
+        divergence_confirmed=divergence_confirmed,
         impulse_confirmed=True,
         carry_confirmed=bool(carry_state != CarryState.UNCLEAR and not carry_finished),
         structure_confirmed=True,
@@ -1091,6 +1102,7 @@ def build_active_trade_audit(
         range_rejection_candidate = detect_range_rejection_candidate(
             timeframe=timeframe,
             structures=structures,
+            divergence=divergence,
             trace=trace,
         )
         type3_candidate = detect_type3_candidate(timeframe=timeframe, structures=structures, trace=trace)

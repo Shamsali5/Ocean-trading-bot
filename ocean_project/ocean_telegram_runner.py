@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import requests
-from openai import OpenAI
 
 from ocean_framework import FrameworkEngine
 
@@ -23,6 +22,12 @@ from ocean_framework import FrameworkEngine
 MODEL = os.getenv("OCEAN_OPENAI_MODEL", "gpt-5.4")
 REASONING_EFFORT = os.getenv("OCEAN_REASONING_EFFORT", "high")
 ANALYSIS_MODE = os.getenv("OCEAN_ANALYSIS_MODE", "local").lower().strip()
+if ANALYSIS_MODE == "openai":
+    print(
+        "OpenAI analysis mode is deprecated for framework v1.2 compliance; "
+        "using deterministic local mode."
+    )
+    ANALYSIS_MODE = "local"
 
 SYMBOLS = [s.strip().upper() for s in os.getenv("OCEAN_SYMBOLS", "BTCUSDT").split(",") if s.strip()]
 INTERVALS = ["3m", "5m", "15m", "1h", "4h"]
@@ -70,14 +75,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-if ANALYSIS_MODE == "openai" and not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set.")
 if SEND_TELEGRAM and not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
 if SEND_TELEGRAM and not TELEGRAM_CHAT_ID:
     raise RuntimeError("TELEGRAM_CHAT_ID is not set.")
 
-client = OpenAI(api_key=OPENAI_API_KEY) if ANALYSIS_MODE == "openai" else None
 framework_engine = FrameworkEngine()
 
 
@@ -1255,40 +1257,10 @@ def normalize_analysis(result: dict[str, Any], symbol: str, ts_utc: str, current
 # OPENAI ANALYSIS
 # =========================
 def analyze_symbol(symbol: str, framework: str, market_data: dict[str, Any]) -> dict[str, Any]:
-    ts_utc = utc_now_iso()
-    current_price = derive_current_price(market_data)
-    prompt_payload = build_prompt_payload(market_data)
-    prompt = build_prompt(symbol, framework, prompt_payload, ts_utc, current_price)
-
-    response = client.responses.create(
-        model=MODEL,
-        reasoning={"effort": REASONING_EFFORT},
-        instructions=(
-            "You are the OCEAN × Natural Chanlun AI market-reading engine. "
-            "Use only the supplied OHLCV and runtime constitution. Ignore previous chats. "
-            "Never predict. Read structure first, energy second, zone third, signal last. "
-            "Apply strict divergence timeframe ownership: fill divergence_audit independently for each timeframe, "
-            "and make last_meaningful_divergence a copy of selected_last_meaningful_tf only. "
-            "Apply strict active-trade timeframe ownership: fill active_trade_audit independently, "
-            "select the true origin timeframe, and make trade_classification/current_move follow that selected origin. "
-            "Never promote 15m divergence/trade into 1H or 5m carry into a 5m origin trade. "
-            "If two timeframes independently confirm the same directional story, fill multi_level_story and separate controlling origin, active execution trade, and carrying timeframe. "
-            "If the higher timeframe only contains lower-timeframe structure, mark it as weakening context only, not official. "
-            "Return only valid JSON matching the schema."
-        ),
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "ocean_chanlun_telegram_v1_4",
-                "strict": True,
-                "schema": analysis_schema(),
-            }
-        },
-        input=prompt,
+    del symbol, framework, market_data
+    raise RuntimeError(
+        "OpenAI analysis mode is disabled; framework v1.2 requires the deterministic local engine."
     )
-
-    parsed = json.loads(response.output_text)
-    return normalize_analysis(parsed, symbol, ts_utc, current_price)
 
 
 def save_analysis(symbol: str, result: dict[str, Any]) -> Path:
@@ -1551,25 +1523,19 @@ def seconds_until_next_half_hour() -> int:
 # RUNNER
 # =========================
 def run_once() -> None:
-    framework = load_framework() if ANALYSIS_MODE == "openai" else ""
-
     for symbol in SYMBOLS:
         print(f"[{utc_now_iso()}] Fetching data for {symbol}...")
         raw_market_data = fetch_all_symbol_data(symbol)
         ts_utc = utc_now_iso()
         current_price = derive_current_price(raw_market_data)
 
-        if ANALYSIS_MODE == "openai":
-            print(f"[{utc_now_iso()}] Sending {symbol} to OpenAI...")
-            result = analyze_symbol(symbol, framework, raw_market_data)
-        else:
-            print(f"[{utc_now_iso()}] Running local framework engine for {symbol}...")
-            result = normalize_analysis(
-                framework_engine.analyze(symbol, raw_market_data, ts_utc),
-                symbol,
-                ts_utc,
-                current_price,
-            )
+        print(f"[{utc_now_iso()}] Running local framework engine for {symbol}...")
+        result = normalize_analysis(
+            framework_engine.analyze(symbol, raw_market_data, ts_utc),
+            symbol,
+            ts_utc,
+            current_price,
+        )
 
         output_file = save_analysis(symbol, result)
         print(f"[{utc_now_iso()}] Saved analysis: {output_file}")

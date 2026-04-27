@@ -38,7 +38,7 @@ _IMPORTANT_FIELDS: dict[str, list[str]] = {
     "TRADE_CLASSIFICATION": ["trade_function", "type_label"],
     "MANAGEMENT_STATE": ["management_state"],
     "CURRENT_ACTIVE_MEANINGFUL_TRADE": ["exists"],
-    "POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": ["if_already_in", "if_not_in"],
+    "POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": ["already_in_status", "not_in_status"],
     "MARKET_HIERARCHY": ["controlling_origin", "active_execution_trade"],
     "WHAT_TO_WATCH_NEXT": ["next_event"],
     "CURRENT_MOVE_SUMMARY": ["summary"],

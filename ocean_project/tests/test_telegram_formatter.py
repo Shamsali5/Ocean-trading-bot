@@ -572,6 +572,17 @@ def test_formatter_shows_flip_hint_when_close_and_flip_active() -> None:
     assert "flip_carry: 3m" in text
 
 
+def test_position_management_section_uses_status_labels_not_extra_actions() -> None:
+    report = _sample_report()
+    report.decision.final_action = FinalAction.BUY
+    text = format_compact_telegram_report(report)
+    assert "Signal: BUY" in text
+    assert "already_in_status: WAIT" in text
+    assert "not_in_status: BUY" in text
+    assert "\nif_already_in:" not in text
+    assert "\nif_not_in:" not in text
+
+
 def test_compact_report_keeps_required_ownership_fields_in_final_execution() -> None:
     report = _sample_report()
     text = format_compact_telegram_report(report)

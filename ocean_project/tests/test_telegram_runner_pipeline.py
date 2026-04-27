@@ -193,6 +193,10 @@ def test_openai_api_key_not_required_for_runner(
     assert len(reports) == 1
 
 
+def test_legacy_openai_analysis_path_is_disabled() -> None:
+    assert not hasattr(telegram_runner, "analyze_symbol")
+
+
 def test_buy_forced_to_wait_when_high_timeframe_context_missing(tmp_path: Path) -> None:
     config = _config(tmp_path)
     market_data = _market_data(["5m", "3m"])

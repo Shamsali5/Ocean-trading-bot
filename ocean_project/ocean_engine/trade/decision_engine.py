@@ -212,6 +212,7 @@ def build_decision_state(
         structures=structures,
         trace=trace,
     )
+    management_decision_for_resolver = management_decision
     if management_decision is not None and resolved_position_mode in {"LONG", "SHORT", "FLAT"}:
         management_signal = (
             management_decision.if_already_in
@@ -228,6 +229,8 @@ def build_decision_state(
             decision.management_state = management_decision.management_state
             decision.reason = management_decision.reason
             entry_decision_payload["reason"] = decision.reason
+        elif resolved_position_mode == "FLAT":
+            management_decision_for_resolver = None
 
     if (
         move_context is not None
@@ -332,7 +335,7 @@ def build_decision_state(
 
     final_resolved = resolve_final_action(
         entry_decision=entry_decision_payload,
-        management_decision=management_decision,
+        management_decision=management_decision_for_resolver,
         active_trade={
             "exists": selected.exists,
             "trade_function": (
@@ -408,7 +411,43 @@ def _evaluate_management_decision(
     if not selected.existing_hold_valid:
         return None
 
-    carry_tf = selected.carry_timeframe or selected.origin_timeframe
+    carry_tf = selected.carry_timeframe
+    if not carry_tf or carry_tf == selected.origin_timeframe:
+        return evaluate_position_management(
+            active_trade={
+                "exists": selected.exists,
+                "existing_hold_valid": selected.existing_hold_valid,
+                "fresh_entry_valid": selected.fresh_entry_valid,
+                "direction": (
+                    "BULLISH"
+                    if selected_direction == Direction.UP
+                    else "BEARISH"
+                    if selected_direction == Direction.DOWN
+                    else "NONE"
+                ),
+                "current_status": selected.current_status,
+            },
+            carry_result={
+                "state": "UNCLEAR",
+                "finished": False,
+            },
+            opposite_divergence_result={
+                "exists": False,
+                "direction": "NONE",
+                "micro_only": False,
+            },
+            opposite_impulse_result={
+                "confirmed": False,
+                "direction": "NONE",
+            },
+            higher_context={
+                "supports_weakening": False,
+                "opposite_side_has_carry": False,
+                "official_opposite_authority": False,
+            },
+            room_for_new_move=False,
+            trace=trace,
+        )
     divergence_field = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}.get(carry_tf)
     divergence_row = getattr(divergence_audit, divergence_field) if divergence_field else None
     opposite_dir = Direction.DOWN if selected_direction == Direction.UP else Direction.UP
@@ -438,6 +477,12 @@ def _evaluate_management_decision(
 
     story_direction = _normalize_direction(_direction_value(getattr(multi_level_story, "direction", None)))
     higher_supports_weakening = story_direction == opposite_label
+    official_opposite_authority = bool(
+        higher_supports_weakening
+        and multi_level_story is not None
+        and getattr(multi_level_story, "active", False)
+        and str(getattr(multi_level_story, "higher_tf_status", "")).upper() == "OFFICIAL_MULTI_LEVEL"
+    )
     opposite_side_has_carry = bool(
         opposite_selected is not None
         and opposite_selected.exists
@@ -479,6 +524,7 @@ def _evaluate_management_decision(
         higher_context={
             "supports_weakening": higher_supports_weakening,
             "opposite_side_has_carry": opposite_side_has_carry,
+            "official_opposite_authority": official_opposite_authority,
         },
         room_for_new_move=room_for_new_move,
         trace=trace,

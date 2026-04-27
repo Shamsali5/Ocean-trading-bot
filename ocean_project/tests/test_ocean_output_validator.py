@@ -21,7 +21,7 @@ def test_validator_returns_valid_for_complete_output() -> None:
         "K TRADE_CLASSIFICATION": {"trade_function": "DECOMPOSITION_TRADE", "type_label": "15m Bullish Type 1"},
         "L MANAGEMENT_STATE": {"management_state": "HOLD"},
         "M CURRENT_ACTIVE_MEANINGFUL_TRADE": {"exists": True, "label": "15m Bullish Type 1"},
-        "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {"if_already_in": "HOLD LONG", "if_not_in": "WAIT"},
+        "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {"already_in_status": "HOLD LONG", "not_in_status": "WAIT"},
         "O MARKET_HIERARCHY": {"controlling_origin": "1H Bullish Type 1", "active_execution_trade": "15m Bullish Type 1"},
         "P WHAT_TO_WATCH_NEXT": {"next_event": "carry continuation"},
         "Q CURRENT_MOVE_SUMMARY": {"summary": "bullish continuation with active carry"},

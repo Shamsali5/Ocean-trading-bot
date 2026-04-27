@@ -102,6 +102,10 @@ def evaluate_position_management(
         _bool(higher_context, "supports_weakening")
         or _bool(higher_context, "higher_supports_weakening")
     )
+    opposite_authority_official = bool(
+        _bool(higher_context, "opposite_authority_official")
+        or _bool(higher_context, "official_opposite_authority")
+    )
     opposite_side_has_carry = bool(
         _bool(higher_context, "opposite_side_has_carry")
         or _bool(higher_context, "opposite_has_carry")
@@ -114,6 +118,7 @@ def evaluate_position_management(
         close_condition_met
         and opposite_side_has_carry
         and higher_supports_weakening
+        and opposite_authority_official
         and bool(room_for_new_move)
         and not micro_divergence_only
     )
@@ -146,7 +151,9 @@ def evaluate_position_management(
         severity="ERROR" if flip_attempted and not new_authority_ready else "INFO",
         details=(
             f"close_condition={close_condition_met}, opposite_side_has_carry={opposite_side_has_carry}, "
-            f"higher_supports_weakening={higher_supports_weakening}, room_for_new_move={bool(room_for_new_move)}"
+            f"higher_supports_weakening={higher_supports_weakening}, "
+            f"opposite_authority_official={opposite_authority_official}, "
+            f"room_for_new_move={bool(room_for_new_move)}"
         ),
     )
     _add_check(

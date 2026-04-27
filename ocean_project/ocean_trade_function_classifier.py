@@ -66,20 +66,20 @@ def classify_trade_function(
     reason = "No trade function context."
 
     if type_label == "TYPE_3" or candidate_kind == "TYPE3":
-        valid = bool(type_valid)
+        valid = bool(type_valid and impulse_confirmed and carry_confirmed)
         trade_function = "BREAKOUT_TRADE" if valid else "NONE"
         reason = (
-            "Breakout Trade requires valid Type 3."
+            "Breakout Trade requires valid Type 3 with impulse and carry confirmation."
             if valid
-            else "Breakout Trade invalid: Type 3 classification is not valid."
+            else "Breakout Trade invalid: Type 3, impulse, or carry confirmation is missing."
         )
     elif type_label == "TYPE_2" or candidate_kind == "TYPE2":
-        valid = bool(type_valid)
+        valid = bool(type_valid and impulse_confirmed and carry_confirmed)
         trade_function = "PULLBACK_CONTINUATION_TRADE" if valid else "NONE"
         reason = (
-            "Pullback Continuation Trade requires valid Type 2."
+            "Pullback Continuation Trade requires valid Type 2 with continuation impulse and carry."
             if valid
-            else "Pullback Continuation Trade invalid: Type 2 classification is not valid."
+            else "Pullback Continuation Trade invalid: Type 2, impulse, or carry confirmation is missing."
         )
     elif candidate_kind == "RANGE_REJECTION":
         valid = bool(range_edge_rejection and divergence_confirmed and impulse_confirmed and carry_confirmed)
