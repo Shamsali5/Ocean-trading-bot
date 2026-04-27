@@ -4,26 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ocean_framework_v12_contract import REQUIRED_OUTPUT_SECTIONS
 
 _SECTION_ORDER: list[tuple[str, str, str]] = [
-    ("A", "META", "META"),
-    ("B", "HIGHER_TIMEFRAME_CONTEXT", "HIGHER TIMEFRAME CONTEXT"),
-    ("C", "CURRENT_MOVE", "CURRENT MOVE"),
-    ("D", "STRUCTURE_STATE", "STRUCTURE STATE"),
-    ("E", "DIVERGENCE_STATE", "DIVERGENCE STATE"),
-    ("F", "LAST_MEANINGFUL_DIVERGENCE", "LAST MEANINGFUL DIVERGENCE"),
-    ("G", "IMPULSE_ACCEPTANCE", "IMPULSE ACCEPTANCE"),
-    ("H", "SUPPLY_DEMAND_ZONE_MAP", "SUPPLY DEMAND ZONE MAP"),
-    ("I", "CARRY_STATUS", "CARRY STATUS"),
-    ("J", "MULTI_LEVEL_STORY", "MULTI LEVEL STORY"),
-    ("K", "TRADE_CLASSIFICATION", "TRADE CLASSIFICATION"),
-    ("L", "MANAGEMENT_STATE", "MANAGEMENT STATE"),
-    ("M", "CURRENT_ACTIVE_MEANINGFUL_TRADE", "CURRENT ACTIVE MEANINGFUL TRADE"),
-    ("N", "POSITION_MANAGEMENT_FOR_ACTIVE_TRADE", "POSITION MANAGEMENT FOR ACTIVE TRADE"),
-    ("O", "MARKET_HIERARCHY", "MARKET HIERARCHY"),
-    ("P", "WHAT_TO_WATCH_NEXT", "WHAT TO WATCH NEXT"),
-    ("Q", "CURRENT_MOVE_SUMMARY", "CURRENT MOVE SUMMARY"),
-    ("R", "FINAL_EXECUTION_BLOCK", "FINAL EXECUTION BLOCK"),
+    (chr(ord("A") + index), section, section.replace("_", " "))
+    for index, section in enumerate(REQUIRED_OUTPUT_SECTIONS)
 ]
 
 _FINAL_EXECUTION_FIELDS = [
@@ -181,7 +166,7 @@ def _render_section_lines(section: str, value: Any) -> list[str]:
         for field in field_order:
             found = _get_field_key(value, field)
             if found is not None:
-                label = field if section == "R FINAL_EXECUTION_BLOCK" else found
+                label = field if section == "FINAL_EXECUTION_BLOCK" else found
                 lines.append(f"{label}: {_safe_value(value.get(found))}")
                 seen.add(found)
         for field in sorted(value.keys()):

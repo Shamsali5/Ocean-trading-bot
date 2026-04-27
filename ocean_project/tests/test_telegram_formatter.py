@@ -125,6 +125,7 @@ def test_compact_report_includes_final_action() -> None:
     report = _sample_report()
     text = format_compact_telegram_report(report)
     assert "Signal: HOLD LONG" in text
+    assert "R FINAL_EXECUTION_BLOCK" in text
 
 
 def test_compact_report_includes_divergence_audit() -> None:
@@ -148,7 +149,7 @@ def test_market_story_summarizes_all_timeframes_current_state() -> None:
 
 def test_compact_report_includes_active_trade_audit() -> None:
     text = format_compact_telegram_report(_sample_report())
-    assert "ACTIVE TRADE" in text
+    assert "M CURRENT_ACTIVE_MEANINGFUL_TRADE" in text
     assert (
         "Function: NONE" in text
         or "Function: DECOMPOSITION TRADE" in text
@@ -158,13 +159,13 @@ def test_compact_report_includes_active_trade_audit() -> None:
 
 def test_compact_report_includes_multi_level_story() -> None:
     text = format_compact_telegram_report(_sample_report())
-    assert "MULTI-LEVEL STORY" in text
+    assert "J MULTI_LEVEL_STORY" in text
     assert "OFFICIAL_MULTI_LEVEL" in text
 
 
 def test_compact_report_includes_supply_demand_zones() -> None:
     text = format_compact_telegram_report(_sample_report())
-    assert "SUPPLY / DEMAND" in text
+    assert "H SUPPLY_DEMAND_ZONE_MAP" in text
     assert "DEMAND" in text
 
 
@@ -255,7 +256,7 @@ def test_removed_next_watch_section_from_compact_report() -> None:
         )
     }
     text = format_compact_telegram_report(report)
-    assert "NEXT WATCH" not in text
+    assert "P WHAT_TO_WATCH_NEXT" in text
 
 
 def test_type3_report_displays_active_trade_yes() -> None:
@@ -547,7 +548,7 @@ def test_failed_breakout_appears() -> None:
 
 def test_formatter_shows_market_hierarchy_section() -> None:
     text = format_compact_telegram_report(_sample_report())
-    assert "MARKET HIERARCHY" in text
+    assert "O MARKET_HIERARCHY" in text
     assert "Parent Move:" in text
 
 
@@ -573,7 +574,7 @@ def test_formatter_shows_flip_hint_when_close_and_flip_active() -> None:
 def test_compact_report_keeps_required_ownership_fields_in_final_execution() -> None:
     report = _sample_report()
     text = format_compact_telegram_report(report)
-    assert "FINAL EXECUTION BLOCK" in text
+    assert "R FINAL_EXECUTION_BLOCK" in text
     assert "Controlling Origin: 1H Bullish Type 1" in text
     assert "Active Execution Trade: 15m Bullish Type 1" in text
     assert "Carrying TF: 5m" in text
