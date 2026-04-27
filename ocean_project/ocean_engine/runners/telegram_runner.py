@@ -110,7 +110,11 @@ def build_market_report(
     divergence_audit = build_divergence_audit(structures, vacc_map, trace=trace)
     zones = detect_supply_demand_zones(structures, divergence_audit, trace=trace)
     active_trade_audit = build_active_trade_audit(structures, divergence_audit, trace=trace)
-    multi_level_story = build_multi_level_story(divergence_audit, active_trade_audit)
+    multi_level_story = build_multi_level_story(
+        divergence_audit,
+        active_trade_audit,
+        trace=trace,
+    )
     story_state = build_story_state(
         structures=structures,
         divergence_audit=divergence_audit,
