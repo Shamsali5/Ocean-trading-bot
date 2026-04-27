@@ -568,3 +568,13 @@ def test_formatter_shows_flip_hint_when_close_and_flip_active() -> None:
     text = format_compact_telegram_report(report)
     assert "Flip To: 5m Bearish Type 1" in text
     assert "Flip Carry: 3m" in text
+
+
+def test_compact_report_keeps_required_ownership_fields_in_final_execution() -> None:
+    report = _sample_report()
+    text = format_compact_telegram_report(report)
+    assert "FINAL EXECUTION BLOCK" in text
+    assert "Controlling Origin: 1H Bullish Type 1" in text
+    assert "Active Execution Trade: 15m Bullish Type 1" in text
+    assert "Carrying TF: 5m" in text
+    assert "Signal: HOLD LONG" in text

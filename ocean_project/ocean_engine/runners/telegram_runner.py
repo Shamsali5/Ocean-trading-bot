@@ -26,6 +26,7 @@ from ocean_engine.models.market import (
     TimeframeData,
     VAccSeries,
 )
+from ocean_output_validator import validate_required_output_sections
 from ocean_engine.output.telegram_formatter import format_compact_telegram_report
 from ocean_engine.output.telegram_sender import send_telegram_message
 from ocean_engine.structure.structure_engine import analyze_all_structures
@@ -143,6 +144,56 @@ def build_market_report(
     selected = _selected_active_trade(active_trade_audit)
     selected_label = selected.type_label if selected is not None else "None"
     summary = f"{symbol} {decision.final_action.value} | active={selected_label} | reason={decision.reason or 'N/A'}"
+
+    output_snapshot = {
+        "A META": {
+            "symbol": symbol,
+            "timestamp": timestamp,
+            "current_price": current_price,
+        },
+        "B HIGHER_TIMEFRAME_CONTEXT": {
+            "highest_timeframe": highest_tf,
+            "ordered_timeframes": ordered_tfs,
+            "htf_start_ok": htf_start_ok,
+            "parent_context_available": parent_context_available,
+        },
+        "C CURRENT_MOVE": {
+            "timeframe": move_context.current_timeframe,
+            "direction": move_context.current_direction,
+            "origin": move_context.current_origin,
+        },
+        "D STRUCTURE_STATE": {"structures": structures},
+        "E DIVERGENCE_STATE": {"divergence_audit": divergence_audit},
+        "F LAST_MEANINGFUL_DIVERGENCE": {"selected_last_meaningful_tf": divergence_audit.selected_last_meaningful_tf},
+        "G IMPULSE_ACCEPTANCE": {"decision_action": decision.final_action.value},
+        "H SUPPLY_DEMAND_ZONE_MAP": {"zones": zones},
+        "I CARRY_STATUS": {"selected_carrying_timeframe": decision.carrying_timeframe},
+        "J MULTI_LEVEL_STORY": {"multi_level_story": multi_level_story},
+        "K TRADE_CLASSIFICATION": {"active_trade_label": decision.active_trade_label},
+        "L MANAGEMENT_STATE": {"management_state": decision.management_state},
+        "M CURRENT_ACTIVE_MEANINGFUL_TRADE": {"selected_active_trade_tf": active_trade_audit.selected_active_trade_tf},
+        "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {"final_action": decision.final_action.value},
+        "O MARKET_HIERARCHY": {
+            "controlling_origin": getattr(story_state, "controlling_origin", ""),
+            "active_execution_trade": getattr(story_state, "active_execution_trade", ""),
+            "carrying_timeframe": getattr(story_state, "carrying_timeframe", ""),
+        },
+        "P WHAT_TO_WATCH_NEXT": {"summary": summary},
+        "Q CURRENT_MOVE_SUMMARY": {"summary": summary},
+        "R FINAL_EXECUTION_BLOCK": {
+            "Signal": decision.final_action.value.replace("_", " "),
+            "Trade Function": str(getattr(selected.trade_function, "value", "NONE")) if selected else "NONE",
+            "Type Label": selected.type_label if selected else "",
+            "Controlling Origin": getattr(story_state, "controlling_origin", ""),
+            "Active Execution Trade": getattr(story_state, "active_execution_trade", ""),
+            "Entry Zone": selected.origin_price_zone if selected else "",
+            "Stop / Invalidation": selected.invalidation if selected else "",
+            "Carrying TF": getattr(story_state, "carrying_timeframe", ""),
+            "Management State": decision.management_state,
+            "Reason": decision.reason or "",
+        },
+    }
+    validate_required_output_sections(output_snapshot, trace=trace)
 
     return MarketReport(
         symbol=symbol,

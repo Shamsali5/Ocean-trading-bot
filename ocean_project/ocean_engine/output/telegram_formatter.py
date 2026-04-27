@@ -20,6 +20,7 @@ from ocean_engine.models.market import (
     SupplyDemandZone,
 )
 from ocean_engine.trade.active_trade_engine import active_trade_audit_summary
+from ocean_output_validator import validate_required_output_sections
 
 TIMEFRAME_ORDER = ("4h", "1h", "15m", "5m", "3m")
 TIMEFRAME_RANK = {"4h": 5, "1h": 4, "15m": 3, "5m": 2, "3m": 1}
@@ -392,8 +393,171 @@ def format_compact_telegram_report(report: MarketReport) -> str:
         f"━━━━━━━━━━━━━━\n"
         f"SUMMARY\n{_text(getattr(report, 'summary', ''), default='Deterministic report generated.')}"
     )
+    # Validate/report sections and render a stable framework-safe block.
+    output_dict = _build_framework_output_dict(
+        report=report,
+        symbol=symbol,
+        timestamp=timestamp,
+        current_price=current_price,
+        decision_block=decision_block,
+        active_trade_text=format_active_trade(active_trade_audit),
+        divergence_text=format_divergence_audit(divergence_audit),
+        carry_text=format_carry_status(report),
+        story_text=format_market_story(report),
+        range_text=format_range_status(structures),
+        zones_text=format_zones(zone_list),
+        multi_level_text=format_multi_level_story(story),
+        hierarchy_text=format_hierarchy(report),
+        next_watch_text=format_next_watch(report),
+        summary_text=_text(getattr(report, "summary", ""), default="Deterministic report generated."),
+        position_management_text=format_position_management(decision),
+    )
+    validate_required_output_sections(
+        output_dict=output_dict,
+        trace=getattr(report, "framework_audit_trace", None),
+    )
+    final_block = output_dict.get("FINAL_EXECUTION_BLOCK") or output_dict.get("R FINAL_EXECUTION_BLOCK", {})
+    final_execution_block = (
+        "FINAL EXECUTION BLOCK\n"
+        f"Signal: {_text(final_block.get('Signal', 'N/A'))}\n"
+        f"Trade Function: {_text(final_block.get('Trade Function', 'N/A'))}\n"
+        f"Type Label: {_text(final_block.get('Type Label', 'N/A'))}\n"
+        f"Controlling Origin: {_text(final_block.get('Controlling Origin', 'N/A'))}\n"
+        f"Active Execution Trade: {_text(final_block.get('Active Execution Trade', 'N/A'))}\n"
+        f"Entry Zone: {_text(final_block.get('Entry Zone', 'N/A'))}\n"
+        f"Stop / Invalidation: {_text(final_block.get('Stop / Invalidation', 'N/A'))}\n"
+        f"Carrying TF: {_text(final_block.get('Carrying TF', 'N/A'))}\n"
+        f"Management State: {_text(final_block.get('Management State', 'N/A'))}\n"
+        f"Reason: {_text(final_block.get('Reason', 'N/A'))}"
+    )
+    message = f"{message}\n\n━━━━━━━━━━━━━━\n{final_execution_block}"
     # Telegram limit safety.
     return message[:3900]
+
+
+def _build_framework_output_dict(
+    *,
+    report: MarketReport,
+    symbol: str,
+    timestamp: str,
+    current_price: str,
+    decision_block: str,
+    active_trade_text: str,
+    divergence_text: str,
+    carry_text: str,
+    story_text: str,
+    range_text: str,
+    zones_text: str,
+    multi_level_text: str,
+    hierarchy_text: str,
+    next_watch_text: str,
+    summary_text: str,
+    position_management_text: str,
+) -> dict[str, Any]:
+    """Build canonical A-R section map for output validation/rendering."""
+
+    decision = getattr(report, "decision", None)
+    action_text = _format_enum_value(getattr(decision, "final_action", "WAIT")) if decision is not None else "WAIT"
+    active_trade_audit = getattr(report, "active_trade_audit", None) or _latest_active_trade_audit(report)
+    selected = _selected_candidate(active_trade_audit)
+    trade_function = _format_enum_value(getattr(selected, "trade_function", "NONE")) if selected is not None else "NONE"
+    type_label = _text(getattr(selected, "type_label", ""), default="N/A") if selected is not None else "N/A"
+    entry_zone = _text(getattr(selected, "origin_price_zone", ""), default="N/A") if selected is not None else "N/A"
+    stop_invalid = _text(getattr(selected, "invalidation", ""), default="N/A") if selected is not None else "N/A"
+    carrying_tf = (
+        _text(getattr(decision, "carrying_timeframe", ""), default="N/A")
+        if decision is not None
+        else "N/A"
+    )
+    story_state = getattr(report, "story_state", None)
+    multi_story = getattr(report, "multi_level_story", None)
+    controlling_origin = "N/A"
+    active_execution_trade = "N/A"
+    if story_state is not None:
+        controlling_origin = _text(getattr(story_state, "controlling_origin", ""), default="N/A")
+        active_execution_trade = _text(getattr(story_state, "active_execution_trade", ""), default="N/A")
+    if controlling_origin == "N/A" and multi_story is not None:
+        controlling_origin = _text(getattr(multi_story, "controlling_origin", ""), default="N/A")
+    if active_execution_trade == "N/A" and multi_story is not None:
+        active_execution_trade = _text(getattr(multi_story, "active_execution_trade", ""), default="N/A")
+    management_state = _text(getattr(decision, "management_state", "N/A")) if decision is not None else "N/A"
+    reason = _text(getattr(decision, "reason", "N/A")) if decision is not None else "N/A"
+
+    return {
+        "META": {
+            "symbol": symbol,
+            "timestamp": timestamp,
+            "current_price": current_price,
+        },
+        "HIGHER_TIMEFRAME_CONTEXT": {
+            "text": hierarchy_text,
+        },
+        "CURRENT_MOVE": {
+            "text": story_text,
+        },
+        "STRUCTURE_STATE": {
+            "text": range_text,
+        },
+        "DIVERGENCE_STATE": {
+            "text": divergence_text,
+        },
+        "LAST_MEANINGFUL_DIVERGENCE": {
+            "selected_tf": _text(
+                getattr(getattr(report, "divergence_audit", None), "selected_last_meaningful_tf", ""),
+                default="N/A",
+            ),
+        },
+        "IMPULSE_ACCEPTANCE": {
+            "text": divergence_text,
+        },
+        "SUPPLY_DEMAND_ZONE_MAP": {
+            "text": zones_text,
+        },
+        "CARRY_STATUS": {
+            "text": carry_text,
+        },
+        "MULTI_LEVEL_STORY": {
+            "text": multi_level_text,
+            "controlling_origin": controlling_origin,
+            "active_execution_trade": active_execution_trade,
+            "carrying_tf": carrying_tf,
+        },
+        "TRADE_CLASSIFICATION": {
+            "trade_function": trade_function,
+            "type_label": type_label,
+        },
+        "MANAGEMENT_STATE": {
+            "management_state": management_state,
+        },
+        "CURRENT_ACTIVE_MEANINGFUL_TRADE": {
+            "text": active_trade_text,
+        },
+        "POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {
+            "text": position_management_text,
+        },
+        "MARKET_HIERARCHY": {
+            "text": hierarchy_text,
+        },
+        "WHAT_TO_WATCH_NEXT": {
+            "text": next_watch_text,
+        },
+        "CURRENT_MOVE_SUMMARY": {
+            "text": summary_text,
+        },
+        "FINAL_EXECUTION_BLOCK": {
+            "Signal": action_text,
+            "Trade Function": trade_function,
+            "Type Label": type_label,
+            "Controlling Origin": controlling_origin,
+            "Active Execution Trade": active_execution_trade,
+            "Entry Zone": entry_zone,
+            "Stop / Invalidation": stop_invalid,
+            "Carrying TF": carrying_tf,
+            "Management State": management_state,
+            "Reason": reason,
+            "raw_text": decision_block,
+        },
+    }
 
 
 def _format_enum_value(value: Any) -> str:

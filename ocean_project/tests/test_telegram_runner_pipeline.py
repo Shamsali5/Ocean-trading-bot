@@ -286,3 +286,16 @@ def test_build_market_report_records_zone_audit_checks(tmp_path: Path) -> None:
     assert "Supply/demand checked after structure" in names
     assert "Zone status classified" in names
     assert "Zone alignment classified" in names
+
+
+def test_build_market_report_records_output_template_checks(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    trace = report.framework_audit_trace
+    assert trace is not None
+    names = {check.name for check in trace.checks}
+    assert "Section A META exists" in names
+    assert "Section R FINAL_EXECUTION_BLOCK exists" in names
+    assert "FINAL_EXECUTION_BLOCK field 'Signal' exists" in names
+    assert "FINAL_EXECUTION_BLOCK field 'Carrying TF' exists" in names
