@@ -212,6 +212,7 @@ def build_decision_state(
         structures=structures,
         trace=trace,
     )
+    adjusted_management_decision = management_decision
     if management_decision is not None and resolved_position_mode in {"LONG", "SHORT", "FLAT"}:
         management_signal = (
             management_decision.if_already_in
@@ -228,6 +229,15 @@ def build_decision_state(
             decision.management_state = management_decision.management_state
             decision.reason = management_decision.reason
             entry_decision_payload["reason"] = decision.reason
+        if resolved_position_mode == "FLAT":
+            from ocean_management_gate import ManagementDecision as _MgmtDecision
+            adjusted_management_decision = _MgmtDecision(
+                signal=management_signal,
+                management_state=management_decision.management_state,
+                if_already_in=management_decision.if_already_in,
+                if_not_in=management_decision.if_not_in,
+                reason=management_decision.reason,
+            )
 
     if (
         move_context is not None
@@ -332,7 +342,7 @@ def build_decision_state(
 
     final_resolved = resolve_final_action(
         entry_decision=entry_decision_payload,
-        management_decision=management_decision,
+        management_decision=adjusted_management_decision,
         active_trade={
             "exists": selected.exists,
             "trade_function": (
