@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ocean_impulse_acceptance import validate_breakout_acceptance
+from ocean_type_classifier import classify_type_1, classify_type_2, classify_type_3
 from ocean_trade_function_classifier import TradeFunctionResult, classify_trade_function
 from ocean_zone_engine import ZoneResult, zone_allows_trade
 from ocean_engine.models.enums import CarryState, Direction, DivergenceDirection, SetupType, TradeFunction
@@ -128,10 +129,44 @@ def build_type1_candidate(
     if not carry_identifiable:
         return default_active_trade_candidate(timeframe)
 
-    direction = DivergenceDirection.BULLISH if divergence.direction == DivergenceDirection.BULLISH else DivergenceDirection.BEARISH
-    tf_label = timeframe.upper() if timeframe in {"1h", "4h"} else timeframe
-    dir_label = "Bullish" if divergence.direction == DivergenceDirection.BULLISH else "Bearish"
-    type_label = f"{tf_label} {dir_label} Type 1"
+    direction = (
+        DivergenceDirection.BULLISH
+        if divergence.direction == DivergenceDirection.BULLISH
+        else DivergenceDirection.BEARISH
+    )
+    classification = classify_type_1(
+        divergence_result={
+            "timeframe": timeframe,
+            "direction": direction.value,
+            "official": bool(divergence.exists),
+            "exists": bool(divergence.exists),
+            "valid_energy_weakening": bool(divergence.weakening_count >= 2),
+            "weakening_count": int(divergence.weakening_count),
+            "velocity_weaker": bool(divergence.velocity_weaker),
+            "acceleration_weaker": bool(divergence.acceleration_weaker),
+            "acceleration_area_weaker": bool(divergence.acceleration_area_weaker),
+        },
+        impulse_result={
+            "confirmed": bool(divergence.impulse_confirmed),
+            "direction": direction.value,
+        },
+        carry_result={
+            "state": carry.state.value if carry.state != CarryState.MATURE else "ACTIVE",
+            "direction": (
+                carry.direction.value
+                if hasattr(carry.direction, "value")
+                else str(carry.direction)
+            ),
+            "finished": carry.finished,
+            "lower_tf_carry_available": bool(carry.timeframe),
+        },
+        trace=trace,
+    )
+    if not classification.valid or classification.type_label != "TYPE_1":
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = classification.reason
+        return candidate
+    type_label = classification.full_label
 
     finished = carry.finished
     too_late = carry.state in {CarryState.MATURE, CarryState.EXHAUSTING} or finished
@@ -239,13 +274,11 @@ def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         expected_direction = Direction.UP
         pullback_direction = Direction.DOWN
         carry_direction = Direction.UP
-        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bullish Type 2"
         invalidation = "Bullish Type 2 invalidated when pullback breaks Type 1 origin low."
     else:
         expected_direction = Direction.DOWN
         pullback_direction = Direction.UP
         carry_direction = Direction.DOWN
-        type_label = f"{timeframe.upper() if timeframe in {'1h', '4h'} else timeframe} Bearish Type 2"
         invalidation = "Bearish Type 2 invalidated when pullback breaks Type 1 origin high."
 
     if pullback_leg.direction != pullback_direction:
@@ -288,6 +321,43 @@ def detect_type2_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         candidate = default_active_trade_candidate(timeframe)
         candidate.selection_reason = "Type 2 invalid: carry did not resume."
         return candidate
+
+    classification = classify_type_2(
+        prior_type_1={
+            "valid": bool(
+                prior_type1.exists and prior_type1.setup_type == SetupType.TYPE_1
+            ),
+            "type_label": str(
+                getattr(prior_type1.setup_type, "value", prior_type1.setup_type)
+            ),
+            "timeframe": timeframe,
+            "direction": (
+                prior_type1.direction.value
+                if hasattr(prior_type1.direction, "value")
+                else str(prior_type1.direction)
+            ),
+        },
+        pullback_context={
+            "pulled_back": True,
+            "not_invalidated": True,
+            "weakens": bool(pullback_size < impulse_size),
+        },
+        continuation_impulse={
+            "confirmed": True,
+            "direction": "BULLISH" if expected_direction == Direction.UP else "BEARISH",
+        },
+        carry_result={
+            "state": carry_state.value,
+            "direction": carry_direction.value,
+            "finished": carry_finished,
+        },
+        trace=trace,
+    )
+    if not classification.valid or classification.type_label != "TYPE_2":
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = classification.reason
+        return candidate
+    type_label = classification.full_label
 
     too_late_to_chase = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
     fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
@@ -415,6 +485,32 @@ def detect_type3_candidate(*_args, **_kwargs) -> ActiveTradeCandidate:
         carry_direction=carry_direction,
         structures=structures if isinstance(structures, dict) else {},
     )
+    classification = classify_type_3(
+        range_result={
+            "timeframe": timeframe,
+            "valid": bool(range_state.active),
+            "upper_edge": range_state.upper_edge,
+            "lower_edge": range_state.lower_edge,
+        },
+        breakout_acceptance_result={
+            "accepted": breakout_validation.accepted,
+            "boundary_broken": breakout_validation.boundary_broken,
+            "retest_or_acceptance": breakout_validation.retest_or_acceptance,
+            "continuation_outside": breakout_validation.continuation_outside,
+            "direction": carry_direction.value,
+        },
+        carry_result={
+            "state": carry_state.value,
+            "direction": carry_direction.value,
+            "finished": carry_finished,
+        },
+        trace=_kwargs.get("trace", None) if isinstance(_kwargs, dict) else None,
+    )
+    if not classification.valid or classification.type_label != "TYPE_3":
+        candidate = default_active_trade_candidate(timeframe)
+        candidate.selection_reason = classification.reason
+        return candidate
+    type_label = classification.full_label
     too_late_to_chase = carry_state in {CarryState.MATURE, CarryState.EXHAUSTING}
     fresh_entry_valid = carry_state in {CarryState.FRESH, CarryState.ACTIVE}
     existing_hold_valid = (

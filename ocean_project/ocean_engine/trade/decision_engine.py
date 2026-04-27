@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from ocean_engine.models.enums import CarryState, Direction, FinalAction
+from ocean_entry_gate import evaluate_fresh_entry
+from ocean_final_action_resolver import resolve_final_action
+from ocean_management_gate import evaluate_position_management
+from ocean_engine.models.enums import CarryState, Direction, FinalAction, SetupType
 from ocean_engine.models.market import (
     ActiveTradeAudit,
     ActiveTradeCandidate,
@@ -173,11 +176,26 @@ def build_decision_state(
     zones: list[SupplyDemandZone] | None = None,
     position_mode: str = "UNKNOWN",
     move_context: MoveContext | None = None,
+    trace=None,
 ) -> DecisionState:
     """Build final decision state and apply hard safety guards."""
 
     selected = selected_active_trade_or_default(active_trade_audit)
+    resolved_position_mode = _normalize_position_mode(position_mode)
     decision = initial_decision_from_active_trade(selected, position_mode=position_mode)
+    entry_decision_payload = {
+        "fresh_entry_valid": bool(selected.fresh_entry_valid),
+        "side": (
+            "BUY"
+            if _candidate_direction(selected) == Direction.UP and selected.fresh_entry_valid and not selected.too_late_to_chase
+            else "SELL"
+            if _candidate_direction(selected) == Direction.DOWN and selected.fresh_entry_valid and not selected.too_late_to_chase
+            else None
+        ),
+        "entry_zone": selected.origin_price_zone,
+        "invalidation": selected.invalidation,
+        "reason": decision.reason,
+    }
 
     if multi_level_story is not None:
         decision.controlling_origin = multi_level_story.controlling_origin
@@ -185,13 +203,31 @@ def build_decision_state(
 
     selected_direction = _candidate_direction(selected)
     opposite_selected = _selected_opposite_trade(active_trade_audit, selected_direction)
-    if opposite_selected is not None and _can_close_and_flip(selected, opposite_selected):
-        decision.final_action = FinalAction.CLOSE_AND_FLIP
-        decision.action = FinalAction.CLOSE_AND_FLIP
-        decision.management_state = "CLOSE_AND_FLIP"
-        decision.reason = (
-            "Existing move finished; opposite official setup with carry is active."
+    management_decision = _evaluate_management_decision(
+        selected=selected,
+        selected_direction=selected_direction,
+        divergence_audit=divergence_audit,
+        opposite_selected=opposite_selected,
+        multi_level_story=multi_level_story,
+        structures=structures,
+        trace=trace,
+    )
+    if management_decision is not None and resolved_position_mode in {"LONG", "SHORT", "FLAT"}:
+        management_signal = (
+            management_decision.if_already_in
+            if resolved_position_mode in {"LONG", "SHORT"}
+            else management_decision.if_not_in
         )
+        management_action = _action_from_management_signal(
+            management_signal,
+            selected_direction,
+        )
+        if management_action != FinalAction.WAIT:
+            decision.final_action = management_action
+            decision.action = management_action
+            decision.management_state = management_decision.management_state
+            decision.reason = management_decision.reason
+            entry_decision_payload["reason"] = decision.reason
 
     if (
         move_context is not None
@@ -202,6 +238,123 @@ def build_decision_state(
         decision.action = FinalAction.WAIT
         decision.management_state = "NONE"
         decision.reason = "Parent/current move separation unclear; framework v1.2 requires current move origin for fresh entry."
+
+    if decision.final_action in {FinalAction.BUY, FinalAction.SELL}:
+        selected_direction = _candidate_direction(selected)
+        gate_side = (
+            "BUY"
+            if selected_direction == Direction.UP
+            else "SELL"
+            if selected_direction == Direction.DOWN
+            else None
+        )
+        origin_field_map = {
+            "4h": "tf_4h",
+            "1h": "tf_1h",
+            "15m": "tf_15m",
+            "5m": "tf_5m",
+            "3m": "tf_3m",
+        }
+        origin_field = origin_field_map.get(selected.origin_timeframe or "")
+        divergence_row = getattr(divergence_audit, origin_field, None) if origin_field else None
+        range_row = structures.get(selected.origin_timeframe).range_state if selected.origin_timeframe in structures else None
+        entry_decision = evaluate_fresh_entry(
+            move_context=move_context,
+            type_classification={
+                "type_label": selected.setup_type.value if selected.setup_type is not None else "NONE",
+                "full_label": selected.type_label,
+                "valid": bool(selected.exists and selected.setup_type in {SetupType.TYPE_1, SetupType.TYPE_2, SetupType.TYPE_3}),
+                "origin_timeframe": selected.origin_timeframe,
+                "direction": (
+                    "BULLISH"
+                    if selected_direction == Direction.UP
+                    else "BEARISH"
+                    if selected_direction == Direction.DOWN
+                    else "NONE"
+                ),
+                "invalidation": selected.invalidation,
+            },
+            trade_function_result={
+                "trade_function": (
+                    selected.trade_function.value
+                    if hasattr(selected.trade_function, "value")
+                    else str(selected.trade_function)
+                ),
+                "valid": bool(
+                    selected.trade_function is not None
+                    and str(getattr(selected.trade_function, "value", selected.trade_function)).upper() != "NONE"
+                ),
+            },
+            impulse_result={
+                "confirmed": bool(
+                    selected.confirmation_price is not None
+                    and (
+                        divergence_row is None
+                        or bool(getattr(divergence_row, "impulse_confirmed", False))
+                    )
+                ),
+                "acceptance_valid": bool(selected.setup_type == SetupType.TYPE_3),
+            },
+            carry_result={
+                "state": selected.carry_state.value if hasattr(selected.carry_state, "value") else str(selected.carry_state),
+                "timeframe": selected.carry_timeframe,
+                "finished": selected.current_status.upper() == "FINISHED",
+                "exhausting": selected.carry_state == CarryState.EXHAUSTING,
+            },
+            range_result=range_row,
+            zone_results=zones or [],
+            multi_level_result=multi_level_story,
+            trace=trace,
+        )
+        if not entry_decision.fresh_entry_valid or entry_decision.side not in {"BUY", "SELL"}:
+            decision.final_action = FinalAction.WAIT
+            decision.action = FinalAction.WAIT
+            decision.management_state = "NONE"
+            decision.reason = entry_decision.reason
+            decision.fresh_entry_valid = False
+            if entry_decision.reason and entry_decision.reason not in decision.guard_reasons:
+                decision.guard_reasons.append(entry_decision.reason)
+        elif gate_side is not None and entry_decision.side != gate_side:
+            decision.final_action = FinalAction.WAIT
+            decision.action = FinalAction.WAIT
+            decision.management_state = "NONE"
+            decision.reason = "Entry gate side mismatch with active trade direction."
+            decision.fresh_entry_valid = False
+            if decision.reason not in decision.guard_reasons:
+                decision.guard_reasons.append(decision.reason)
+        entry_decision_payload = {
+            "fresh_entry_valid": bool(entry_decision.fresh_entry_valid),
+            "side": entry_decision.side,
+            "entry_zone": entry_decision.entry_zone,
+            "invalidation": entry_decision.invalidation,
+            "reason": entry_decision.reason,
+        }
+
+    final_resolved = resolve_final_action(
+        entry_decision=entry_decision_payload,
+        management_decision=management_decision,
+        active_trade={
+            "exists": selected.exists,
+            "trade_function": (
+                selected.trade_function.value
+                if hasattr(selected.trade_function, "value")
+                else str(selected.trade_function)
+            ),
+            "type_label": selected.type_label,
+            "controlling_origin": decision.controlling_origin,
+            "active_execution_trade": decision.active_execution_trade,
+            "origin_price_zone": selected.origin_price_zone,
+            "invalidation": selected.invalidation,
+            "carry_timeframe": selected.carry_timeframe,
+        },
+        framework_trace=trace,
+        trace=trace,
+    )
+    resolved_action = _action_from_signal(final_resolved.signal)
+    decision.final_action = resolved_action
+    decision.action = resolved_action
+    decision.management_state = final_resolved.management_state
+    decision.reason = final_resolved.reason
 
     guarded = apply_decision_guards(
         decision=decision,
@@ -239,23 +392,161 @@ def _selected_opposite_trade(
     return None
 
 
-def _can_close_and_flip(
+def _evaluate_management_decision(
     selected: ActiveTradeCandidate,
-    opposite: ActiveTradeCandidate,
-) -> bool:
-    if not selected.exists or not opposite.exists:
-        return False
+    selected_direction: Direction,
+    divergence_audit: DivergenceAudit,
+    opposite_selected: ActiveTradeCandidate | None,
+    multi_level_story: MultiLevelStory | None,
+    structures: dict[str, StructureState],
+    trace,
+):
+    if not selected.exists:
+        return None
+    if selected_direction not in {Direction.UP, Direction.DOWN}:
+        return None
     if not selected.existing_hold_valid:
+        return None
+
+    carry_tf = selected.carry_timeframe or selected.origin_timeframe
+    divergence_field = {"4h": "tf_4h", "1h": "tf_1h", "15m": "tf_15m", "5m": "tf_5m", "3m": "tf_3m"}.get(carry_tf)
+    divergence_row = getattr(divergence_audit, divergence_field) if divergence_field else None
+    opposite_dir = Direction.DOWN if selected_direction == Direction.UP else Direction.UP
+    opposite_label = "BEARISH" if opposite_dir == Direction.DOWN else "BULLISH"
+    divergence_direction = _normalize_direction(_direction_value(getattr(divergence_row, "direction", None)))
+    opposite_divergence_exists = bool(
+        divergence_row is not None
+        and getattr(divergence_row, "exists", False)
+        and getattr(divergence_row, "abc_valid", False)
+        and divergence_direction == opposite_label
+    )
+    opposite_impulse_confirmed = bool(
+        opposite_divergence_exists
+        and divergence_row is not None
+        and getattr(divergence_row, "impulse_confirmed", False)
+    )
+    grade_value = str(_direction_value(getattr(divergence_row, "grade", ""))).upper()
+    weakening_count = int(getattr(divergence_row, "weakening_count", 0) or 0)
+    # "Micro divergence alone" should not block flips when opposite impulse
+    # is already confirmed and higher-level authority aligns.
+    micro_only = bool(
+        opposite_divergence_exists
+        and grade_value == "WEAK"
+        and weakening_count <= 1
+        and not opposite_impulse_confirmed
+    )
+
+    story_direction = _normalize_direction(_direction_value(getattr(multi_level_story, "direction", None)))
+    higher_supports_weakening = story_direction == opposite_label
+    opposite_side_has_carry = bool(
+        opposite_selected is not None
+        and opposite_selected.exists
+        and opposite_selected.fresh_entry_valid
+        and opposite_selected.carry_state in {CarryState.FRESH, CarryState.ACTIVE}
+        and not opposite_selected.too_late_to_chase
+    )
+    room_for_new_move = bool(
+        opposite_side_has_carry and _room_allows_opposite_move(structures, opposite_selected)
+    )
+
+    return evaluate_position_management(
+        active_trade={
+            "exists": selected.exists,
+            "existing_hold_valid": selected.existing_hold_valid,
+            "fresh_entry_valid": selected.fresh_entry_valid,
+            "direction": (
+                "BULLISH"
+                if selected_direction == Direction.UP
+                else "BEARISH"
+                if selected_direction == Direction.DOWN
+                else "NONE"
+            ),
+            "current_status": selected.current_status,
+        },
+        carry_result={
+            "state": selected.carry_state.value if hasattr(selected.carry_state, "value") else str(selected.carry_state),
+            "finished": selected.current_status.upper() == "FINISHED",
+        },
+        opposite_divergence_result={
+            "exists": opposite_divergence_exists,
+            "direction": opposite_label if opposite_divergence_exists else "NONE",
+            "micro_only": micro_only,
+        },
+        opposite_impulse_result={
+            "confirmed": opposite_impulse_confirmed,
+            "direction": opposite_label if opposite_impulse_confirmed else "NONE",
+        },
+        higher_context={
+            "supports_weakening": higher_supports_weakening,
+            "opposite_side_has_carry": opposite_side_has_carry,
+        },
+        room_for_new_move=room_for_new_move,
+        trace=trace,
+    )
+
+
+def _action_from_management_signal(signal: str, selected_direction: Direction) -> FinalAction:
+    normalized = str(signal or "").strip().upper()
+    if normalized == "HOLD_LONG":
+        return FinalAction.HOLD_LONG
+    if normalized == "HOLD_SHORT":
+        return FinalAction.HOLD_SHORT
+    if normalized == "CLOSE_LONG":
+        return FinalAction.CLOSE_LONG
+    if normalized == "CLOSE_SHORT":
+        return FinalAction.CLOSE_SHORT
+    if normalized == "CLOSE_AND_FLIP":
+        return FinalAction.CLOSE_AND_FLIP
+    if normalized == "HOLD":
+        if selected_direction == Direction.UP:
+            return FinalAction.HOLD_LONG
+        if selected_direction == Direction.DOWN:
+            return FinalAction.HOLD_SHORT
+    return FinalAction.WAIT
+
+
+def _action_from_signal(signal: str) -> FinalAction:
+    normalized = str(signal or "").strip().upper().replace("_", " ")
+    if normalized == "BUY":
+        return FinalAction.BUY
+    if normalized == "SELL":
+        return FinalAction.SELL
+    if normalized == "HOLD LONG":
+        return FinalAction.HOLD_LONG
+    if normalized == "HOLD SHORT":
+        return FinalAction.HOLD_SHORT
+    if normalized == "CLOSE LONG":
+        return FinalAction.CLOSE_LONG
+    if normalized == "CLOSE SHORT":
+        return FinalAction.CLOSE_SHORT
+    if normalized == "CLOSE AND FLIP":
+        return FinalAction.CLOSE_AND_FLIP
+    return FinalAction.WAIT
+
+
+def _direction_value(value) -> str:
+    return str(getattr(value, "value", value) or "")
+
+
+def _normalize_direction(value: str) -> str:
+    text = str(value or "").strip().upper()
+    if text in {"UP", "BULLISH", "BUY"}:
+        return "BULLISH"
+    if text in {"DOWN", "BEARISH", "SELL"}:
+        return "BEARISH"
+    return "NONE"
+
+
+def _room_allows_opposite_move(
+    structures: dict[str, StructureState],
+    opposite_selected: ActiveTradeCandidate | None,
+) -> bool:
+    if opposite_selected is None:
         return False
-    # Old side must be structurally finished (exhausting or explicitly finished),
-    # while opposite side must be a valid fresh setup with carry.
-    old_finished = selected.carry_state == CarryState.EXHAUSTING or selected.current_status.upper() == "FINISHED"
-    if not old_finished:
-        return False
-    if not opposite.fresh_entry_valid:
-        return False
-    if opposite.carry_state not in {CarryState.FRESH, CarryState.ACTIVE}:
-        return False
-    if opposite.too_late_to_chase:
-        return False
-    return True
+    structure = structures.get(opposite_selected.origin_timeframe)
+    if structure is None or structure.range_state is None:
+        return True
+    if not structure.range_state.active:
+        return True
+    location = str(structure.range_state.price_location or "").strip().upper()
+    return location not in {"MID", "MIDPOINT"}

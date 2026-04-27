@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ocean_multilevel_validator import validate_multi_level_same_story
 from ocean_engine.models.enums import Direction, DivergenceDirection, SetupType
 from ocean_engine.models.market import ActiveTradeAudit, ActiveTradeCandidate, DivergenceAudit, MultiLevelStory
 
@@ -113,72 +114,78 @@ def get_official_timeframes_by_direction(
 def build_multi_level_story(
     divergence_audit: DivergenceAudit,
     active_trade_audit: ActiveTradeAudit,
+    trace=None,
 ) -> MultiLevelStory:
-    """Build multi-level same-story context from official rows."""
+    """Build multi-level same-story context with strict anti-drift validation."""
 
-    grouped = get_official_timeframes_by_direction(divergence_audit, active_trade_audit)
-    bullish_rows = grouped["BULLISH"]
-    bearish_rows = grouped["BEARISH"]
+    divergence_rows: dict[str, dict[str, object]] = {}
+    type_rows: dict[str, dict[str, object]] = {}
+    carry_rows: dict[str, dict[str, object]] = {}
+    for tf in TIMEFRAME_ORDER:
+        divergence = getattr(divergence_audit, TIMEFRAME_FIELD_MAP[tf])
+        candidate = getattr(active_trade_audit, TIMEFRAME_FIELD_MAP[tf])
+        candidate_direction = _candidate_direction(candidate)
+        direction_label = "BULLISH" if candidate_direction == Direction.UP else "BEARISH" if candidate_direction == Direction.DOWN else "NONE"
 
-    if not bullish_rows and not bearish_rows:
-        return MultiLevelStory(
-            symbol="",
-            primary_timeframe="",
-            active=False,
-            direction=Direction.UNCLEAR,
-            confirmed_timeframes=[],
-            controlling_origin="",
-            active_execution_trade="",
-            carrying_timeframe="",
-            higher_tf_status="NONE",
-            explanation="No official timeframe rows.",
-            summary="No multi-level story.",
-        )
+        divergence_rows[tf] = {
+            "timeframe": tf,
+            "exists": divergence.exists,
+            "abc_valid": divergence.abc_valid,
+            "direction": divergence.direction,
+            "impulse_confirmed": divergence.impulse_confirmed,
+            "valid_energy_weakening": bool(divergence.weakening_count >= 2),
+            "weakening_count": divergence.weakening_count,
+            "velocity_weaker": divergence.velocity_weaker,
+            "acceleration_weaker": divergence.acceleration_weaker,
+            "acceleration_area_weaker": divergence.acceleration_area_weaker,
+        }
 
-    if len(bullish_rows) > len(bearish_rows):
-        selected_direction = "BULLISH"
-        rows = bullish_rows
-    elif len(bearish_rows) > len(bullish_rows):
-        selected_direction = "BEARISH"
-        rows = bearish_rows
-    else:
-        # Tie-break by highest timeframe presence.
-        bullish_best = max((timeframe_rank(str(row["timeframe"])) for row in bullish_rows), default=0)
-        bearish_best = max((timeframe_rank(str(row["timeframe"])) for row in bearish_rows), default=0)
-        if bullish_best >= bearish_best:
-            selected_direction = "BULLISH"
-            rows = bullish_rows
-        else:
-            selected_direction = "BEARISH"
-            rows = bearish_rows
+        type_rows[tf] = {
+            "timeframe": tf,
+            "origin_timeframe": candidate.origin_timeframe,
+            "type_label": candidate.setup_type.value if candidate.setup_type is not None else "NONE",
+            "full_label": candidate.type_label,
+            "direction": direction_label,
+            "valid": bool(candidate.exists and candidate.setup_type in {SetupType.TYPE_1, SetupType.TYPE_2, SetupType.TYPE_3}),
+            "fresh_entry_valid": candidate.fresh_entry_valid,
+            "existing_hold_valid": candidate.existing_hold_valid,
+            "impulse_confirmed": bool(candidate.confirmation_price is not None),
+            "breakout_acceptance_valid": bool(candidate.setup_type == SetupType.TYPE_3),
+        }
 
-    confirmed_timeframes = sorted({str(row["timeframe"]) for row in rows}, key=timeframe_rank, reverse=True)
-    active = len(confirmed_timeframes) >= 2
-    higher_tf_status = "OFFICIAL_MULTI_LEVEL" if active else "WEAKENING_CONTEXT_ONLY"
+        carry_rows[tf] = {
+            "timeframe": candidate.carry_timeframe,
+            "direction": candidate.carry_direction,
+            "state": candidate.carry_state,
+            "finished": candidate.current_status.upper() == "FINISHED",
+        }
 
-    controlling_tf = max(confirmed_timeframes, key=timeframe_rank)
-    controlling_row = next(row for row in rows if str(row["timeframe"]) == controlling_tf)
-    controlling_origin = str(controlling_row["label"])
-
-    selected_trade = _resolve_selected_trade(active_trade_audit)
-    execution_row = _choose_execution_row(rows, selected_trade, selected_direction, confirmed_timeframes)
-    active_execution_trade = str(execution_row["label"]) if execution_row is not None else ""
-
-    carrying_timeframe = ""
-    if execution_row is not None and execution_row.get("candidate") is not None:
-        candidate = execution_row["candidate"]
-        if isinstance(candidate, ActiveTradeCandidate):
-            carrying_timeframe = candidate.carry_timeframe
-
-    story_direction = Direction.UP if selected_direction == "BULLISH" else Direction.DOWN
-    explanation = (
-        f"{selected_direction.title()} confirmation on {', '.join(normalize_tf_label(tf) for tf in confirmed_timeframes)}."
+    validated = validate_multi_level_same_story(
+        divergence_results_by_tf=divergence_rows,
+        type_results_by_tf=type_rows,
+        carry_results_by_tf=carry_rows,
+        trace=trace,
     )
+
+    confirmed_timeframes = list(validated.confirmed_timeframes)
+    story_direction = (
+        Direction.UP
+        if validated.direction == "BULLISH"
+        else Direction.DOWN
+        if validated.direction == "BEARISH"
+        else Direction.UNCLEAR
+    )
+    controlling_tf = confirmed_timeframes[0] if confirmed_timeframes else ""
+    higher_tf_status = validated.higher_tf_official_or_context
+    active = bool(validated.active and validated.valid)
+    if not validated.valid and confirmed_timeframes:
+        higher_tf_status = "WEAKENING_CONTEXT_ONLY"
     summary = (
-        f"{selected_direction.title()} story | control={controlling_origin} | "
-        f"execution={active_execution_trade or 'None'} | carry={carrying_timeframe or 'None'}"
+        f"{validated.direction.title() if validated.direction else 'None'} story | "
+        f"control={validated.controlling_origin or 'None'} | "
+        f"execution={validated.active_execution_trade or 'None'} | "
+        f"carry={validated.carrying_timeframe or 'None'} | valid={validated.valid}"
     )
-
     return MultiLevelStory(
         symbol="",
         primary_timeframe=controlling_tf,
@@ -187,11 +194,11 @@ def build_multi_level_story(
         active=active,
         direction=story_direction,
         confirmed_timeframes=confirmed_timeframes,
-        controlling_origin=controlling_origin,
-        active_execution_trade=active_execution_trade,
-        carrying_timeframe=carrying_timeframe,
+        controlling_origin=validated.controlling_origin or "",
+        active_execution_trade=validated.active_execution_trade or "",
+        carrying_timeframe=validated.carrying_timeframe or "",
         higher_tf_status=higher_tf_status,
-        explanation=explanation,
+        explanation=validated.explanation,
         summary=summary,
     )
 
