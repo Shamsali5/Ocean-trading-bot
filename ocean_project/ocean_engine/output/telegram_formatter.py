@@ -411,6 +411,7 @@ def _build_framework_output_dict(
     active_trade_text = format_active_trade(active_trade_audit)
     position_management_text = format_position_management(decision)
     next_watch_text = format_next_watch(report)
+    zone_rows = _compact_zone_rows(zones, max_rows=6)
     controlling_origin = "N/A"
     active_execution_trade = "N/A"
     if story_state is not None:
@@ -422,6 +423,14 @@ def _build_framework_output_dict(
         active_execution_trade = _text(getattr(story, "active_execution_trade", ""), default="N/A")
     management_state = _text(getattr(decision, "management_state", "N/A")) if decision is not None else "N/A"
     reason = _text(getattr(decision, "reason", "N/A")) if decision is not None else "N/A"
+    guard_reasons = list(getattr(decision, "guard_reasons", []) or []) if decision is not None else []
+    guards_text = " | ".join(str(item) for item in guard_reasons).strip() or "N/A"
+    opposite_candidate = _selected_opposite_candidate(active_trade_audit)
+    flip_to = "N/A"
+    flip_carry = "N/A"
+    if action_text == "CLOSE AND FLIP" and opposite_candidate is not None:
+        flip_to = _text(getattr(opposite_candidate, "type_label", ""), default="N/A")
+        flip_carry = _text(getattr(opposite_candidate, "carry_timeframe", ""), default="N/A")
 
     return {
         "A META": {
@@ -456,7 +465,7 @@ def _build_framework_output_dict(
             "details": divergence_text,
         },
         "H SUPPLY_DEMAND_ZONE_MAP": {
-            "zones": zones,
+            "zones": zone_rows,
             "details": zones_text,
         },
         "I CARRY_STATUS": {
@@ -485,6 +494,8 @@ def _build_framework_output_dict(
         "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {
             "if_already_in": if_already_in,
             "if_not_in": if_not_in,
+            "flip_to": flip_to,
+            "flip_carry": flip_carry,
             "details": position_management_text,
         },
         "O MARKET_HIERARCHY": {
@@ -510,6 +521,7 @@ def _build_framework_output_dict(
             "Carrying TF": carrying_tf,
             "Management State": management_state,
             "Reason": reason,
+            "Guards": guards_text,
         },
     }
 
@@ -908,5 +920,18 @@ def _range_pressure_hint(structures: dict[str, Any]) -> str:
         if status in {"FAILED_BREAK_UP", "FAILED_BREAK_DOWN", "RE_ENTERED"}:
             return "return-to-range pressure"
     return "Watch for next carry/divergence transition"
+
+
+def _compact_zone_rows(zones: list[SupplyDemandZone], max_rows: int) -> list[str]:
+    rows: list[str] = []
+    for zone in zones[:max_rows]:
+        timeframe = _normalize_tf(_text(getattr(zone, "timeframe", ""), default="N/A"))
+        zone_type = _format_enum_value(getattr(zone, "zone_type", "N/A"))
+        band = _text(getattr(zone, "price_band", ""), default="N/A")
+        status = _text(getattr(zone, "status", ""), default="N/A")
+        rows.append(f"{timeframe} {zone_type} {band} {status}".strip())
+    if len(zones) > max_rows:
+        rows.append(f"+{len(zones) - max_rows} more")
+    return rows
 
 

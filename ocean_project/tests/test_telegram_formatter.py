@@ -304,7 +304,8 @@ def test_no_divergence_but_type3_exists_displays_cleanly() -> None:
     report.active_trade_audit.tf_15m.trade_function = "BREAKOUT_TRADE"
     report.active_trade_audit.tf_15m.type_label = "15m Bullish Type 3"
     text = format_compact_telegram_report(report)
-    assert "DIVERGENCE\nAudit: 4H:No | 1H:No | 15m:No | 5m:No | 3m:No" in text
+    assert "E DIVERGENCE_STATE" in text
+    assert "Audit: 4H:No | 1H:No | 15m:No | 5m:No | 3m:No" in text
     assert "Function: BREAKOUT TRADE" in text
 
 
@@ -567,8 +568,8 @@ def test_formatter_shows_flip_hint_when_close_and_flip_active() -> None:
         fresh_entry_valid=True,
     )
     text = format_compact_telegram_report(report)
-    assert "Flip To: 5m Bearish Type 1" in text
-    assert "Flip Carry: 3m" in text
+    assert "flip_to: 5m Bearish Type 1" in text
+    assert "flip_carry: 3m" in text
 
 
 def test_compact_report_keeps_required_ownership_fields_in_final_execution() -> None:

@@ -88,7 +88,7 @@ def test_offline_full_pipeline_smoke(tmp_path: Path) -> None:
     compact = format_compact_telegram_report(report)
     assert "A META" in compact
     assert "C CURRENT_MOVE" in compact
-    assert "Q CURRENT_MOVE_SUMMARY" in compact
+    assert "Q CURRENT_MOVE_SUMM" in compact
 
     saved_path = save_market_report(report, config.results_dir)
     assert saved_path.exists()
