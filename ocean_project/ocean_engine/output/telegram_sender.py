@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import requests
+from ocean_engine.utils import http_client as requests
 
 
 def get_telegram_credentials() -> tuple[str, str]:
