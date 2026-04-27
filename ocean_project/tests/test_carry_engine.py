@@ -91,6 +91,17 @@ def test_missing_carry_structure_gives_unclear() -> None:
     assert state == CarryState.UNCLEAR
 
 
+def test_classify_carry_state_uses_explicit_origin_timeframe_when_provided() -> None:
+    structure = _structure("15m", active_leg=_active_leg(Direction.UP), range_active=False)
+    state = classify_carry_state(
+        structure,
+        Direction.UP,
+        None,
+        origin_timeframe="1h",
+    )
+    assert state in {CarryState.FRESH, CarryState.ACTIVE}
+
+
 def test_matching_active_leg_gives_active_or_fresh() -> None:
     structure = _structure("15m", active_leg=_active_leg(Direction.UP), range_active=False)
     state = classify_carry_state(structure, Direction.UP, None)

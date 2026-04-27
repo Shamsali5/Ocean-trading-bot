@@ -146,6 +146,31 @@ def build_market_report(
     )
 
     selected = _selected_active_trade(active_trade_audit)
+    selected_divergence = _selected_meaningful_divergence(divergence_audit)
+    selected_divergence_tf = _text_or_na(getattr(selected_divergence, "timeframe", None))
+    selected_divergence_direction = _text_or_na(
+        getattr(getattr(selected_divergence, "direction", None), "value", getattr(selected_divergence, "direction", None))
+    )
+    selected_divergence_impulse = bool(getattr(selected_divergence, "impulse_confirmed", False))
+    selected_carry_state = _text_or_na(
+        getattr(getattr(selected, "carry_state", None), "value", getattr(selected, "carry_state", None))
+    )
+    selected_carry_tf = _text_or_na(
+        getattr(selected, "carry_timeframe", None) or getattr(story_state, "carrying_timeframe", None)
+    )
+    selected_trade_function = _text_or_na(
+        getattr(getattr(selected, "trade_function", None), "value", getattr(selected, "trade_function", None)),
+        default="NONE",
+    )
+    selected_type_label = _text_or_na(getattr(selected, "type_label", None))
+    selected_entry_zone = _text_or_na(getattr(selected, "origin_price_zone", None))
+    selected_invalidation = _text_or_na(getattr(selected, "invalidation", None))
+    controlling_origin = _text_or_na(getattr(story_state, "controlling_origin", None))
+    active_execution_trade = _text_or_na(getattr(story_state, "active_execution_trade", None))
+    carrying_timeframe = _text_or_na(getattr(story_state, "carrying_timeframe", None))
+    management_state = _text_or_na(decision.management_state)
+    decision_reason = _text_or_na(decision.reason)
+    final_action_text = decision.final_action.value.replace("_", " ")
     selected_label = selected.type_label if selected is not None else "None"
     summary = f"{symbol} {decision.final_action.value} | active={selected_label} | reason={decision.reason or 'N/A'}"
 
@@ -156,45 +181,80 @@ def build_market_report(
             "current_price": current_price,
         },
         "B HIGHER_TIMEFRAME_CONTEXT": {
-            "highest_timeframe": highest_tf,
+            "highest_tf": _text_or_na(highest_tf),
+            "highest_timeframe": _text_or_na(highest_tf),
             "ordered_timeframes": ordered_tfs,
             "htf_start_ok": htf_start_ok,
             "parent_context_available": parent_context_available,
         },
         "C CURRENT_MOVE": {
-            "timeframe": move_context.current_timeframe,
-            "direction": move_context.current_direction,
-            "origin": move_context.current_origin,
+            "timeframe": _text_or_na(move_context.current_timeframe),
+            "direction": _text_or_na(move_context.current_direction),
+            "origin": _text_or_na(move_context.current_origin),
         },
-        "D STRUCTURE_STATE": {"structures": structures},
-        "E DIVERGENCE_STATE": {"divergence_audit": divergence_audit},
-        "F LAST_MEANINGFUL_DIVERGENCE": {"selected_last_meaningful_tf": divergence_audit.selected_last_meaningful_tf},
-        "G IMPULSE_ACCEPTANCE": {"decision_action": decision.final_action.value},
+        "D STRUCTURE_STATE": {
+            "state": _text_or_na(move_context.current_state),
+            "structures": structures,
+        },
+        "E DIVERGENCE_STATE": {
+            "direction": selected_divergence_direction,
+            "divergence_audit": divergence_audit,
+        },
+        "F LAST_MEANINGFUL_DIVERGENCE": {
+            "timeframe": selected_divergence_tf,
+            "direction": selected_divergence_direction,
+            "selected_last_meaningful_tf": _text_or_na(divergence_audit.selected_last_meaningful_tf),
+        },
+        "G IMPULSE_ACCEPTANCE": {
+            "impulse_confirmed": selected_divergence_impulse,
+            "decision_action": decision.final_action.value,
+        },
         "H SUPPLY_DEMAND_ZONE_MAP": {"zones": zones},
-        "I CARRY_STATUS": {"selected_carrying_timeframe": decision.carrying_timeframe},
-        "J MULTI_LEVEL_STORY": {"multi_level_story": multi_level_story},
-        "K TRADE_CLASSIFICATION": {"active_trade_label": decision.active_trade_label},
-        "L MANAGEMENT_STATE": {"management_state": decision.management_state},
-        "M CURRENT_ACTIVE_MEANINGFUL_TRADE": {"selected_active_trade_tf": active_trade_audit.selected_active_trade_tf},
-        "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {"final_action": decision.final_action.value},
-        "O MARKET_HIERARCHY": {
-            "controlling_origin": getattr(story_state, "controlling_origin", ""),
-            "active_execution_trade": getattr(story_state, "active_execution_trade", ""),
-            "carrying_timeframe": getattr(story_state, "carrying_timeframe", ""),
+        "I CARRY_STATUS": {
+            "state": selected_carry_state,
+            "carrying_tf": selected_carry_tf,
+            "selected_carrying_timeframe": _text_or_na(decision.carrying_timeframe),
         },
-        "P WHAT_TO_WATCH_NEXT": {"summary": summary},
+        "J MULTI_LEVEL_STORY": {
+            "controlling_origin": controlling_origin,
+            "multi_level_story": multi_level_story,
+        },
+        "K TRADE_CLASSIFICATION": {
+            "trade_function": selected_trade_function,
+            "type_label": selected_type_label,
+            "active_trade_label": _text_or_na(decision.active_trade_label),
+        },
+        "L MANAGEMENT_STATE": {"management_state": management_state},
+        "M CURRENT_ACTIVE_MEANINGFUL_TRADE": {
+            "exists": selected is not None,
+            "selected_active_trade_tf": _text_or_na(active_trade_audit.selected_active_trade_tf),
+        },
+        "N POSITION_MANAGEMENT_FOR_ACTIVE_TRADE": {
+            "if_already_in": _position_action_if_already_in(final_action_text),
+            "if_not_in": _position_action_if_not_in(final_action_text),
+            "final_action": final_action_text,
+        },
+        "O MARKET_HIERARCHY": {
+            "controlling_origin": controlling_origin,
+            "active_execution_trade": active_execution_trade,
+            "carrying_timeframe": carrying_timeframe,
+        },
+        "P WHAT_TO_WATCH_NEXT": {
+            "next_event": _text_or_na(decision.reason),
+            "summary": summary,
+        },
         "Q CURRENT_MOVE_SUMMARY": {"summary": summary},
         "R FINAL_EXECUTION_BLOCK": {
-            "Signal": decision.final_action.value.replace("_", " "),
-            "Trade Function": str(getattr(selected.trade_function, "value", "NONE")) if selected else "NONE",
-            "Type Label": selected.type_label if selected else "",
-            "Controlling Origin": getattr(story_state, "controlling_origin", ""),
-            "Active Execution Trade": getattr(story_state, "active_execution_trade", ""),
-            "Entry Zone": selected.origin_price_zone if selected else "",
-            "Stop / Invalidation": selected.invalidation if selected else "",
-            "Carrying TF": getattr(story_state, "carrying_timeframe", ""),
-            "Management State": decision.management_state,
-            "Reason": decision.reason or "",
+            "Signal": final_action_text,
+            "Trade Function": selected_trade_function,
+            "Type Label": selected_type_label,
+            "Controlling Origin": controlling_origin,
+            "Active Execution Trade": active_execution_trade,
+            "Entry Zone": selected_entry_zone,
+            "Stop / Invalidation": selected_invalidation,
+            "Carrying TF": carrying_timeframe,
+            "Management State": management_state,
+            "Reason": decision_reason,
         },
     }
     validate_required_output_sections(output_snapshot, trace=trace)
@@ -518,6 +578,37 @@ def _selected_active_trade(audit: ActiveTradeAudit) -> ActiveTradeCandidate | No
 
 def _divergence_rows(audit: DivergenceAudit) -> dict[str, Any]:
     return {tf: getattr(audit, field) for tf, field in _TF_TO_FIELD.items()}
+
+
+def _selected_meaningful_divergence(audit: DivergenceAudit) -> Any:
+    timeframe = getattr(audit, "selected_last_meaningful_tf", None)
+    if timeframe is None:
+        return None
+    field = _TF_TO_FIELD.get(timeframe)
+    if field is None:
+        return None
+    return getattr(audit, field, None)
+
+
+def _text_or_na(value: Any, default: str = "N/A") -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def _position_action_if_already_in(final_action_text: str) -> str:
+    action = final_action_text.strip().upper()
+    if action in {"HOLD LONG", "HOLD SHORT", "CLOSE LONG", "CLOSE SHORT", "CLOSE AND FLIP"}:
+        return final_action_text
+    return "WAIT"
+
+
+def _position_action_if_not_in(final_action_text: str) -> str:
+    action = final_action_text.strip().upper()
+    if action in {"BUY", "SELL"}:
+        return final_action_text
+    return "WAIT"
 
 
 def _json_safe(value: Any) -> Any:

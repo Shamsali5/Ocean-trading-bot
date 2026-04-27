@@ -299,3 +299,17 @@ def test_build_market_report_records_output_template_checks(tmp_path: Path) -> N
     assert "Section R FINAL_EXECUTION_BLOCK exists" in names
     assert "FINAL_EXECUTION_BLOCK field 'Signal' exists" in names
     assert "FINAL_EXECUTION_BLOCK field 'Carrying TF' exists" in names
+
+
+def test_build_market_report_has_no_missing_required_output_fields(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    market_data = _market_data(config.intervals)
+    report = telegram_runner.build_market_report("BTCUSDT", market_data, config)
+    trace = report.framework_audit_trace
+    assert trace is not None
+    failed_required_field_checks = [
+        check
+        for check in trace.checks
+        if (not check.passed) and check.name == "Required output section fields exist"
+    ]
+    assert failed_required_field_checks == []
